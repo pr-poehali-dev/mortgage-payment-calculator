@@ -50,23 +50,36 @@ function daysInYear(d: Date): number {
   return ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0) ? 366 : 365;
 }
 
-// Проценты за период [prevDate, curDate) по ACT/ACT — с разбивкой по годам
-function calcInterest(balance: number, annualRatePct: number, prevDate: Date, curDate: Date): number {
+// Проценты за период [prevDate, curDate) по ACT/ACT
+function calcInterestForPeriod(balance: number, annualRatePct: number, prevDate: Date, curDate: Date): number {
   const rate = annualRatePct / 100;
   let interest = 0;
   let segStart = new Date(prevDate);
-
   while (segStart < curDate) {
     const y = segStart.getFullYear();
     const nextYearStart = new Date(Date.UTC(y + 1, 0, 1));
     const segEnd = curDate < nextYearStart ? curDate : nextYearStart;
     const days = daysBetween(segStart, segEnd);
-    const basis = daysInYear(segStart);
-    interest += balance * rate / basis * days;
+    interest += balance * rate / daysInYear(segStart) * days;
     segStart = segEnd;
   }
-
   return interest;
+}
+
+// Периодическая ставка для конкретного периода (по фактическим дням)
+function periodRate(annualRatePct: number, prevDate: Date, curDate: Date): number {
+  const rate = annualRatePct / 100;
+  let r = 0;
+  let segStart = new Date(prevDate);
+  while (segStart < curDate) {
+    const y = segStart.getFullYear();
+    const nextYearStart = new Date(Date.UTC(y + 1, 0, 1));
+    const segEnd = curDate < nextYearStart ? curDate : nextYearStart;
+    const days = daysBetween(segStart, segEnd);
+    r += rate / daysInYear(segStart) * days;
+    segStart = segEnd;
+  }
+  return r;
 }
 
 // ── Праздники РФ ──────────────────────────────────────────────
@@ -108,38 +121,28 @@ export function buildSchedule(input: MortgageInput): ScheduleRow[] {
   const rows: ScheduleRow[] = [];
 
   const base = firstPaymentDate ?? addMonths(startDate, 1);
+  const monthlyRate = rate / 100 / 12; // стандартная месячная ставка
 
-  // Аннуитетный платёж фиксируется один раз по формуле rate/12.
-  // Проценты внутри каждого платежа — по фактическим дням (ACT/ACT).
-  // Основной долг = фиксированный_платёж − проценты_за_период.
-  // Если первый период длиннее месяца и проценты > аннуитета —
-  // платёж в этот месяц увеличивается до суммы процентов (тело = 0),
-  // далее аннуитет остаётся прежним.
-  const monthlyRate = rate / 100 / 12;
-  const calcAnnuity = (bal: number, n: number): number => {
-    if (n <= 0 || bal <= 0) return 0;
-    if (monthlyRate === 0) return bal / n;
-    return (bal * monthlyRate * Math.pow(1 + monthlyRate, n)) / (Math.pow(1 + monthlyRate, n) - 1);
-  };
+  // Заранее вычисляем все даты начисления (UTC)
+  const accrualDates: Date[] = [];
+  for (let m = 1; m <= months; m++) {
+    const d = addMonths(base, m - 1);
+    accrualDates.push(new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())));
+  }
 
-  const effectiveMonths = months - interestOnlyMonths;
-  const fixedPayment = calcAnnuity(loan, effectiveMonths);
-
-  // Начало первого периода = дата оформления (UTC-полночь)
+  // Начало первого периода = дата оформления
   let prevUTC = new Date(
     Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate())
   );
 
   for (let m = 1; m <= months; m++) {
     const accrualDate = addMonths(base, m - 1);
-    const accrualUTC = new Date(
-      Date.UTC(accrualDate.getFullYear(), accrualDate.getMonth(), accrualDate.getDate())
-    );
+    const accrualUTC = accrualDates[m - 1];
 
     const days = daysBetween(prevUTC, accrualUTC);
 
-    // Проценты за фактический период (ACT/ACT, с разбивкой по годам)
-    const interest = calcInterest(balance, rate, prevUTC, accrualUTC);
+    // Проценты за фактический период (ACT/ACT)
+    const interest = calcInterestForPeriod(balance, rate, prevUTC, accrualUTC);
 
     const isInterestOnly = m <= interestOnlyMonths;
     let principal: number;
@@ -148,19 +151,45 @@ export function buildSchedule(input: MortgageInput): ScheduleRow[] {
     if (isInterestOnly) {
       principal = 0;
       payment = interest;
+    } else if (m === months) {
+      principal = balance;
+      payment = principal + interest;
     } else {
-      if (m === months) {
-        // Последний платёж — гасим всё что осталось
-        principal = balance;
-        payment = principal + interest;
+      // Считаем аннуитет с учётом фактической ставки ТЕКУЩЕГО периода.
+      //
+      // Логика: PV = A/(1+r0) + A/((1+r0)(1+r1)) + ... + A/((1+r0)(1+r1)^(n-1))
+      //   где r0 = периодическая ставка текущего (возможно нестандартного) периода
+      //       r1 = стандартная месячная ставка для всех последующих периодов
+      //       n  = оставшееся кол-во платежей включая текущий
+      //
+      // PV = A * (1/(1+r0)) * (1 + sum_{k=1}^{n-1} 1/(1+r1)^k)
+      //    = A * (1/(1+r0)) * (1 + (1 - (1+r1)^{-(n-1)}) / r1)
+      //
+      // => A = PV / [ (1/(1+r0)) * (1 + (1-(1+r1)^{-(n-1)})/r1) ]
+
+      const normalPaymentsDone = Math.max(0, m - interestOnlyMonths); // сколько обычных сделано
+      const n = (months - interestOnlyMonths) - normalPaymentsDone + 1; // оставшихся включая текущий
+
+      const r0 = periodRate(rate, prevUTC, accrualUTC); // фактическая ставка этого периода
+      const r1 = monthlyRate;                           // стандартная для следующих
+
+      let currentAnnuity: number;
+      if (n === 1) {
+        currentAnnuity = balance * (1 + r0);
+      } else if (r1 === 0) {
+        currentAnnuity = balance / n;
       } else {
-        // Стандартный платёж = фиксированный аннуитет
-        // principal = платёж - проценты
-        // Если проценты >= аннуитета (нестандартно длинный период) — principal = 0
-        principal = Math.max(0, fixedPayment - interest);
-        if (principal > balance) principal = balance;
-        payment = principal + interest;
+        const tail = (1 - Math.pow(1 + r1, -(n - 1))) / r1; // аннуитетный множитель хвоста
+        const pv = (1 / (1 + r0)) * (1 + tail);
+        currentAnnuity = balance / pv;
       }
+
+      principal = currentAnnuity - interest;
+      // Если период нестандартно длинный и проценты превысили аннуитет —
+      // гасим минимум 1 руб. тела, чтобы долг всегда двигался вперёд
+      if (principal < 1) principal = Math.min(1, balance);
+      if (principal > balance) principal = balance;
+      payment = principal + interest;
     }
 
     balance = Math.max(balance - principal, 0);
