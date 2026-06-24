@@ -282,6 +282,14 @@ const Field = ({
   </div>
 );
 
+const fmtInput = (n: number, isDecimal: boolean) => {
+  if (Number.isNaN(n) || n === 0) return '';
+  if (isDecimal) {
+    return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(n);
+  }
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Math.round(n));
+};
+
 const NumInput = ({
   value,
   onChange,
@@ -294,22 +302,46 @@ const NumInput = ({
   suffix?: string;
   step?: number;
   max?: number;
-}) => (
-  <div className="flex items-center rounded-xl border border-input bg-secondary/40 px-4 transition-colors focus-within:border-accent">
-    <input
-      type="number"
-      value={Number.isNaN(value) ? '' : value}
-      step={step}
-      onChange={(e) => {
-        let v = parseFloat(e.target.value);
-        if (max !== undefined && v > max) v = max;
-        onChange(Number.isNaN(v) ? 0 : v);
-      }}
-      className="w-full bg-transparent py-3.5 font-mono text-lg font-medium outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-    />
-    {suffix && <span className="ml-2 font-mono text-sm text-muted-foreground">{suffix}</span>}
-  </div>
-);
+}) => {
+  const isDecimal = step < 1;
+  const [focused, setFocused] = useState(false);
+  const [raw, setRaw] = useState('');
+
+  const displayValue = focused
+    ? raw
+    : fmtInput(value, isDecimal);
+
+  return (
+    <div className="flex items-center rounded-xl border border-input bg-secondary/40 px-4 transition-colors focus-within:border-accent">
+      <input
+        type="text"
+        inputMode={isDecimal ? 'decimal' : 'numeric'}
+        value={displayValue}
+        onFocus={() => {
+          setFocused(true);
+          setRaw(value === 0 ? '' : String(value));
+        }}
+        onBlur={() => {
+          setFocused(false);
+          const cleaned = raw.replace(/\s/g, '').replace(',', '.');
+          let v = parseFloat(cleaned);
+          if (max !== undefined && v > max) v = max;
+          onChange(Number.isNaN(v) ? 0 : v);
+        }}
+        onChange={(e) => {
+          const val = e.target.value.replace(/[^\d,.\s]/g, '');
+          setRaw(val);
+          const cleaned = val.replace(/\s/g, '').replace(',', '.');
+          let v = parseFloat(cleaned);
+          if (max !== undefined && v > max) v = max;
+          if (!Number.isNaN(v)) onChange(v);
+        }}
+        className="w-full bg-transparent py-3.5 font-mono text-lg font-medium outline-none"
+      />
+      {suffix && <span className="ml-2 font-mono text-sm text-muted-foreground">{suffix}</span>}
+    </div>
+  );
+};
 
 const Toggle = ({
   options,
