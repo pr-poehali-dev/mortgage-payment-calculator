@@ -291,12 +291,13 @@ const Field = ({
   </div>
 );
 
-const fmtInput = (n: number, isDecimal: boolean) => {
+const fmtInput = (n: number) => {
   if (Number.isNaN(n) || n === 0) return '';
-  if (isDecimal) {
-    return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(n);
-  }
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Math.round(n));
+  const hasDecimals = n % 1 !== 0;
+  return new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: hasDecimals ? 2 : 0,
+    minimumFractionDigits: 0,
+  }).format(n);
 };
 
 const NumInput = ({
@@ -316,9 +317,7 @@ const NumInput = ({
   const [focused, setFocused] = useState(false);
   const [raw, setRaw] = useState('');
 
-  const displayValue = focused
-    ? raw
-    : fmtInput(value, isDecimal);
+  const displayValue = focused ? raw : fmtInput(value);
 
   return (
     <div className="flex items-center rounded-xl border border-input bg-secondary/40 px-4 transition-colors focus-within:border-accent">
