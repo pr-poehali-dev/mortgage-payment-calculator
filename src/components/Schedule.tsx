@@ -1,0 +1,66 @@
+import { useState } from 'react';
+import Icon from '@/components/ui/icon';
+import { ScheduleRow, fmt, fmtDate } from '@/lib/mortgage';
+
+const Schedule = ({ rows }: { rows: ScheduleRow[] }) => {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? rows : rows.slice(0, 12);
+
+  return (
+    <div className="overflow-hidden rounded-3xl border border-border bg-card animate-fade-in">
+      <div className="flex items-center justify-between border-b border-border px-6 py-5">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-secondary text-muted-foreground">
+            <Icon name="CalendarDays" size={18} />
+          </div>
+          <div>
+            <h2 className="font-semibold">График погашения</h2>
+            <p className="font-mono text-xs text-muted-foreground">{rows.length} платежей</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left font-mono text-xs uppercase tracking-wider text-muted-foreground">
+              <th className="px-6 py-3 font-medium">№</th>
+              <th className="px-3 py-3 font-medium">Дата</th>
+              <th className="px-3 py-3 text-right font-medium">Платёж</th>
+              <th className="px-3 py-3 text-right font-medium">Проценты</th>
+              <th className="px-3 py-3 text-right font-medium">Долг</th>
+              <th className="px-6 py-3 text-right font-medium">Остаток</th>
+            </tr>
+          </thead>
+          <tbody className="font-mono">
+            {visible.map((r) => (
+              <tr
+                key={r.index}
+                className="border-b border-border/50 transition-colors hover:bg-secondary/40"
+              >
+                <td className="px-6 py-2.5 text-muted-foreground">{r.index}</td>
+                <td className="px-3 py-2.5">{fmtDate(r.date)}</td>
+                <td className="px-3 py-2.5 text-right font-medium">{fmt(r.payment)}</td>
+                <td className="px-3 py-2.5 text-right text-accent">{fmt(r.interest)}</td>
+                <td className="px-3 py-2.5 text-right">{fmt(r.principal)}</td>
+                <td className="px-6 py-2.5 text-right text-muted-foreground">{fmt(r.balance)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {rows.length > 12 && (
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          className="flex w-full items-center justify-center gap-2 border-t border-border py-4 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary/40 hover:text-foreground"
+        >
+          <Icon name={expanded ? 'ChevronUp' : 'ChevronDown'} size={16} />
+          {expanded ? 'Свернуть' : `Показать все ${rows.length} платежей`}
+        </button>
+      )}
+    </div>
+  );
+};
+
+export default Schedule;

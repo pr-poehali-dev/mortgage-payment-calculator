@@ -1,11 +1,12 @@
 import { useState, useMemo } from 'react';
 import Icon from '@/components/ui/icon';
+import { toast } from 'sonner';
+import Schedule from '@/components/Schedule';
+import { buildSchedule, fmt, fmtDate, addMonths, MortgageInput } from '@/lib/mortgage';
+import { exportExcel, exportPDF, exportWord } from '@/lib/export';
 
 type DownMode = 'percent' | 'amount';
 type TermMode = 'years' | 'months';
-
-const fmt = (n: number) =>
-  new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(Math.round(n));
 
 const Index = () => {
   const [price, setPrice] = useState(8000000);
@@ -16,6 +17,8 @@ const Index = () => {
   const [termMode, setTermMode] = useState<TermMode>('years');
   const [years, setYears] = useState(20);
   const [months, setMonths] = useState(240);
+
+  const startDate = useMemo(() => new Date(), []);
 
   const result = useMemo(() => {
     const down = downMode === 'percent' ? (price * downPercent) / 100 : downAmount;
@@ -29,8 +32,55 @@ const Index = () => {
     }
     const total = monthly * n;
     const overpay = total - loan;
-    return { down, loan, monthly, total, overpay, downRatio: price ? down / price : 0 };
+    return {
+      down,
+      loan,
+      monthly,
+      total,
+      overpay,
+      n,
+      downRatio: price ? (down / price) * 100 : 0,
+    };
   }, [price, downMode, downPercent, downAmount, rate, termMode, years, months]);
+
+  const firstPayment = addMonths(startDate, 1);
+
+  const mortgageInput: MortgageInput = {
+    price,
+    down: result.down,
+    loan: result.loan,
+    rate,
+    months: result.n,
+    monthly: result.monthly,
+    total: result.total,
+    overpay: result.overpay,
+    startDate,
+  };
+
+  const schedule = useMemo(
+    () => (result.loan > 0 && result.n > 0 ? buildSchedule(mortgageInput) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [result.loan, result.n, result.monthly, rate, startDate],
+  );
+
+  const copyReport = () => {
+    const text = [
+      'Расчёт ипотеки',
+      `Стоимость недвижимости: ${fmt(price)} ₽`,
+      `Первоначальный взнос: ${fmt(result.down)} ₽ (${result.downRatio.toFixed(1)}%)`,
+      `Срок: ${(result.n / 12).toFixed(1)} лет (${result.n} мес.)`,
+      `Процентная ставка: ${rate}% годовых`,
+      `Ежемесячный платёж: ${fmt(result.monthly)} ₽`,
+    ].join('\n');
+    navigator.clipboard.writeText(text);
+    toast.success('Отчёт скопирован в буфер обмена');
+  };
+
+  const canExport = schedule.length > 0;
+  const guard = (fn: () => void) => () => {
+    if (!canExport) return toast.error('Заполните параметры кредита');
+    fn();
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -76,7 +126,7 @@ const Index = () => {
             <p className="mt-2 font-mono text-xs text-muted-foreground">
               {downMode === 'percent'
                 ? `= ${fmt((price * downPercent) / 100)} ₽`
-                : `= ${(result.downRatio * 100).toFixed(1)} % от стоимости`}
+                : `= ${result.downRatio.toFixed(1)} % от стоимости`}
             </p>
 
             <div className="my-7 h-px bg-border" />
@@ -103,6 +153,11 @@ const Index = () => {
             ) : (
               <NumInput value={months} onChange={setMonths} suffix="мес." max={600} />
             )}
+
+            <div className="mt-7 grid grid-cols-2 gap-3">
+              <DateCard icon="FileSignature" label="Дата оформления" value={fmtDate(startDate)} />
+              <DateCard icon="CalendarClock" label="Первый платёж" value={fmtDate(firstPayment)} />
+            </div>
           </div>
 
           {/* Result */}
@@ -123,16 +178,51 @@ const Index = () => {
               <Stat icon="Wallet" label="Первый взнос" value={`${fmt(result.down)} ₽`} />
               <div className="h-px bg-border" />
               <Stat
-                icon="TrendingUp"
-                label="Переплата"
+                icon="Percent"
+                label="Начисленные проценты"
                 value={`${fmt(result.overpay)} ₽`}
                 accent
               />
               <div className="h-px bg-border" />
-              <Stat icon="Coins" label="Всего выплат" value={`${fmt(result.total)} ₽`} />
+              <Stat
+                icon="TrendingUp"
+                label="Общая переплата"
+                value={`${fmt(result.overpay)} ₽`}
+                accent
+              />
+              <div className="h-px bg-border" />
+              <Stat icon="Coins" label="Долг + проценты" value={`${fmt(result.total)} ₽`} />
             </div>
+
+            <button
+              onClick={copyReport}
+              className="flex items-center justify-center gap-2 rounded-2xl border border-border bg-card py-4 text-sm font-medium transition-colors hover:bg-secondary/60"
+            >
+              <Icon name="Copy" size={16} />
+              Скопировать краткий отчёт
+            </button>
           </div>
         </div>
+
+        {/* Export */}
+        <div className="mt-6 flex flex-wrap gap-3">
+          <ExportBtn icon="Sheet" label="Excel" onClick={guard(() => exportExcel(mortgageInput, schedule))} />
+          <ExportBtn icon="FileText" label="PDF" onClick={guard(() => exportPDF(mortgageInput, schedule))} />
+          <ExportBtn
+            icon="FileType"
+            label="Word"
+            onClick={guard(() => {
+              exportWord(mortgageInput, schedule);
+            })}
+          />
+        </div>
+
+        {/* Schedule */}
+        {canExport && (
+          <div className="mt-6">
+            <Schedule rows={schedule} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -225,7 +315,7 @@ const Stat = ({
   <div className="flex items-center justify-between">
     <div className="flex items-center gap-3">
       <div
-        className={`flex h-9 w-9 items-center justify-center rounded-lg ${
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
           accent ? 'bg-accent/10 text-accent' : 'bg-secondary text-muted-foreground'
         }`}
       >
@@ -237,6 +327,34 @@ const Stat = ({
       {value}
     </span>
   </div>
+);
+
+const DateCard = ({ icon, label, value }: { icon: string; label: string; value: string }) => (
+  <div className="rounded-xl border border-border bg-secondary/30 p-3">
+    <div className="mb-1 flex items-center gap-1.5 text-muted-foreground">
+      <Icon name={icon} size={14} />
+      <span className="text-xs">{label}</span>
+    </div>
+    <span className="font-mono text-sm font-medium">{value}</span>
+  </div>
+);
+
+const ExportBtn = ({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: string;
+  label: string;
+  onClick: () => void;
+}) => (
+  <button
+    onClick={onClick}
+    className="flex flex-1 items-center justify-center gap-2 rounded-2xl border border-border bg-card px-4 py-4 text-sm font-medium transition-all hover:border-accent hover:bg-secondary/60 sm:flex-none sm:px-8"
+  >
+    <Icon name={icon} size={16} className="text-accent" />
+    Скачать в {label}
+  </button>
 );
 
 export default Index;
