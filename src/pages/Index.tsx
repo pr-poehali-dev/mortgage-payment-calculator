@@ -40,14 +40,16 @@ function calcResult(v: VariantState) {
   return { down, loan, monthly, total, overpay, n, downRatio: v.price ? (down / v.price) * 100 : 0 };
 }
 
-function makeReportText(name: string, v: VariantState, r: ReturnType<typeof calcResult>) {
+// monthlyAfterGrace — платёж после льготного периода (осн. долг + проценты)
+function makeReportText(name: string, v: VariantState, r: ReturnType<typeof calcResult>, monthlyAfterGrace?: number) {
+  const monthly = monthlyAfterGrace ?? r.monthly;
   return [
     `Расчёт ипотеки — ${name}`,
     `Стоимость недвижимости: ${fmt(v.price)} ₽`,
     `Первоначальный взнос: ${fmt(r.down)} ₽ (${r.downRatio.toFixed(1)}%)`,
     `Срок: ${Math.floor(r.n / 12)} лет (${r.n} мес.)`,
     `Процентная ставка: ${v.rate}% годовых`,
-    `Ежемесячный платёж: ${fmt(r.monthly)} ₽`,
+    `Ежемесячный платёж: ${fmt(monthly)} ₽`,
   ].join('\n');
 }
 
@@ -188,13 +190,20 @@ const Index = () => {
     _variantSeq = 2;
   };
 
+  // Ежемесячный платёж после льготного периода (первый платёж с телом долга)
+  const monthlyAfterGrace = useMemo(() => {
+    if (!schedule.length) return result.monthly;
+    const firstFull = schedule.find((r) => !r.interestOnly);
+    return firstFull ? firstFull.payment : result.monthly;
+  }, [schedule, result.monthly]);
+
   const reportText = useMemo(() => {
-    if (!compareMode || reportVariantId === null) return makeReportText('Вариант 1', mainVariant, result);
+    if (!compareMode || reportVariantId === null) return makeReportText('Вариант 1', mainVariant, result, monthlyAfterGrace);
     if (reportVariantId === 'all') return allVariants.map((v, i) => makeReportText(v.name, v, allResults[i])).join('\n\n---\n\n');
     const v = variants.find((x) => x.id === reportVariantId);
-    if (!v) return makeReportText('Вариант 1', mainVariant, result);
+    if (!v) return makeReportText('Вариант 1', mainVariant, result, monthlyAfterGrace);
     return makeReportText(v.name, v, calcResult(v));
-  }, [compareMode, reportVariantId, mainVariant, result, allVariants, allResults, variants]);
+  }, [compareMode, reportVariantId, mainVariant, result, allVariants, allResults, variants, monthlyAfterGrace]);
 
   const copyReport = () => {
     const fallback = (text: string) => {
@@ -272,38 +281,39 @@ const Index = () => {
                 onChange={setPrice}
                 stepA={100000}
                 labelA="100 тыс"
-                onEnterNext={() => focusInput(refDown.current)}
+                onNext={() => focusInput(refDown.current)}
               />
             </div>
             <div className="h-px bg-border" />
 
-            {/* Первый взнос */}
-            <div ref={refDown} className="flex items-center gap-2">
+            {/* Первоначальный взнос */}
+            <div ref={refDown} className="flex items-center gap-1.5">
               {downMode === 'percent' ? (
                 <StepInput
-                  label="Взнос"
+                  label="Первоначальный взнос"
                   suffix="%"
                   value={downPercent}
                   onChange={setDownPercent}
                   max={100}
                   stepA={1}
                   labelA="1%"
-                  onEnterNext={() => focusInput(refRate.current)}
+                  onNext={() => focusInput(refRate.current)}
                 />
               ) : (
                 <StepInput
-                  label="Взнос"
+                  label="Первоначальный взнос"
                   suffix="₽"
                   value={downAmount}
                   onChange={setDownAmount}
                   stepA={100000}
                   labelA="100 тыс"
-                  onEnterNext={() => focusInput(refRate.current)}
+                  onNext={() => focusInput(refRate.current)}
                 />
               )}
+              {/* Toggle выровнен по высоте поля h-14 */}
               <Toggle
                 options={[{ id: 'percent', label: '%' }, { id: 'amount', label: '₽' }]}
-                value={downMode} vertical
+                value={downMode} vertical h14
                 onChange={(v) => {
                   const mode = v as DownMode;
                   if (mode === 'percent' && price > 0) setDownPercent(Math.round((downAmount / price) * 10000) / 100);
@@ -312,7 +322,7 @@ const Index = () => {
                 }}
               />
             </div>
-            <p className="font-mono text-[10px] text-muted-foreground pl-[42px]">
+            <p className="font-mono text-[10px] text-muted-foreground pl-[52px]">
               {downMode === 'percent' ? `= ${fmt((price * downPercent) / 100)} ₽` : `= ${result.downRatio.toFixed(2)}% от стоимости`}
             </p>
             <div className="h-px bg-border" />
@@ -327,13 +337,13 @@ const Index = () => {
                 decimal
                 stepA={1}
                 labelA="1%"
-                onEnterNext={() => focusInput(refTerm.current)}
+                onNext={() => focusInput(refTerm.current)}
               />
             </div>
             <div className="h-px bg-border" />
 
             {/* Срок */}
-            <div ref={refTerm} className="flex items-center gap-2">
+            <div ref={refTerm} className="flex items-center gap-1.5">
               {termMode === 'years' ? (
                 <StepInput
                   label="Срок"
@@ -343,7 +353,7 @@ const Index = () => {
                   max={50}
                   stepA={1}
                   labelA="1 год"
-                  onEnterNext={() => focusInput(refInterestOnly.current)}
+                  onNext={() => focusInput(refInterestOnly.current)}
                 />
               ) : (
                 <StepInput
@@ -354,12 +364,12 @@ const Index = () => {
                   max={600}
                   stepA={1}
                   labelA="1 мес"
-                  onEnterNext={() => focusInput(refInterestOnly.current)}
+                  onNext={() => focusInput(refInterestOnly.current)}
                 />
               )}
               <Toggle
                 options={[{ id: 'years', label: 'лет' }, { id: 'months', label: 'мес.' }]}
-                value={termMode} vertical
+                value={termMode} vertical h14
                 onChange={(v) => {
                   const mode = v as TermMode;
                   if (mode === 'months') setMonths(Math.round(years * 12));
@@ -370,20 +380,18 @@ const Index = () => {
             </div>
             <div className="h-px bg-border" />
 
-            {/* Только проценты + Даты — одна строка */}
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-              <div ref={refInterestOnly}>
-                <StepInput
-                  label="Период только %"
-                  suffix="мес."
-                  value={interestOnlyMonths}
-                  onChange={setInterestOnlyMonths}
-                  max={result.n}
-                  stepA={1}
-                  labelA="1 мес"
-                  compact
-                />
-              </div>
+            {/* Период оплаты только % */}
+            <div ref={refInterestOnly} className="flex items-center">
+              <StepInput
+                label="Период оплаты только %"
+                suffix="мес."
+                value={interestOnlyMonths}
+                onChange={setInterestOnlyMonths}
+                max={result.n}
+                stepA={1}
+                labelA="1 мес"
+                compact
+              />
             </div>
             <div className="h-px bg-border" />
 
@@ -391,7 +399,7 @@ const Index = () => {
             <div className="grid grid-cols-2 gap-2">
               <DateEdit
                 icon="FileSignature"
-                label="Оформление"
+                label="Дата оформления"
                 value={startDate}
                 onChange={handleStartDateChange}
               />
@@ -738,12 +746,12 @@ const CompareCell = ({
             onChange={(e) => setRaw(e.target.value.replace(/[^\d,.]/g, ''))}
             onBlur={() => commit(raw)}
             onKeyDown={(e) => { if (e.key === 'Enter') commit(raw); if (e.key === 'Escape') setEditing(false); }}
-            className="w-16 bg-transparent px-2 py-0.5 font-mono text-xs font-semibold outline-none"
+            className={`${field === 'price' ? 'w-28' : 'w-20'} bg-transparent px-2 py-0.5 font-mono text-xs font-semibold outline-none`}
           />
         ) : (
           <button
             onClick={() => { setEditing(true); setRaw(getCurrentRaw()); }}
-            className="w-16 px-2 py-0.5 text-left font-mono text-xs font-semibold text-foreground hover:text-accent transition-colors"
+            className={`${field === 'price' ? 'w-28' : 'w-20'} px-2 py-0.5 text-left font-mono text-xs font-semibold text-foreground hover:text-accent transition-colors`}
           >
             {getFormatted()}
           </button>
@@ -811,69 +819,94 @@ const fmtNum = (n: number) => {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: hasDecimals ? 2 : 0 }).format(n);
 };
 
-// Кнопка шага — визуально кликабельная
+// Кнопка шага +/− — единый визуальный стиль
 const StepBtn = ({ label, title, onClick }: { label: string; title?: string; onClick: () => void }) => (
   <button
     onClick={onClick}
     title={title}
-    className="flex h-9 w-9 shrink-0 cursor-pointer select-none items-center justify-center rounded-xl border border-border bg-secondary font-bold text-base text-foreground shadow-sm transition-all hover:border-accent hover:bg-accent/10 hover:text-accent active:scale-95 active:shadow-none"
+    tabIndex={-1}
+    className="flex h-11 w-11 shrink-0 cursor-pointer select-none items-center justify-center rounded-xl border border-border bg-secondary font-bold text-lg text-foreground shadow-sm transition-all hover:border-accent hover:bg-accent/10 hover:text-accent active:scale-95 active:shadow-none"
   >{label}</button>
 );
 
+// Floating-label поле + кнопки
 const StepInput = ({
   value, onChange, label, suffix, max, decimal = false,
-  stepA, labelA, stepB, labelB, hint, compact = false, onEnterNext,
+  stepA, labelA, stepB, labelB, hint, compact = false, onNext,
 }: {
   value: number; onChange: (n: number) => void;
   label?: string; suffix?: string; max?: number; decimal?: boolean;
   stepA?: number; labelA?: string;
   stepB?: number; labelB?: string;
   hint?: string;
-  compact?: boolean;  // уменьшенный режим (поле льготного периода)
-  onEnterNext?: () => void; // переместить фокус на следующее поле
+  compact?: boolean;
+  onNext?: () => void; // вызывается при Enter или Tab
 }) => {
   const [focused, setFocused] = useState(false);
   const [raw, setRaw] = useState('');
 
   const clamp = (v: number) => {
-    if (max !== undefined && v > max) return max;
-    if (v < 0) return 0;
-    return v;
+    let n = v;
+    if (max !== undefined && n > max) n = max;
+    if (n < 0) n = 0;
+    return n;
   };
 
   const doStep = (delta: number) => onChange(clamp(parseFloat((value + delta).toFixed(4))));
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if ((e.key === 'Enter' || e.key === 'Tab') && onNext) {
+      e.preventDefault();
+      // Сначала применяем текущее значение
+      const cleaned = raw.replace(/\s/g, '').replace(',', '.');
+      const n = parseFloat(cleaned);
+      onChange(clamp(Number.isNaN(n) ? 0 : n));
+      onNext();
+    }
+  };
+
+  const displayVal = focused ? raw : (value === 0 ? '' : fmtNum(value));
+  const hasValue = value !== 0;
+  const floated = focused || hasValue;
+
   if (compact) {
-    // Компактный вид: надпись + поле + кнопки в одну строку, всё мелкое
     return (
       <div className="flex items-center gap-1.5">
-        {label && <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{label}</span>}
-        {stepA !== undefined && <StepBtn label="−" title={labelA ? `−${labelA}` : undefined} onClick={() => doStep(-stepA)} />}
-        <div className="flex w-20 items-center gap-1 rounded-lg border border-input bg-secondary/40 px-2 py-1.5 text-center transition-colors focus-within:border-accent">
+        {stepA !== undefined && (
+          <StepBtn label="−" title={labelA ? `−${labelA}` : undefined} onClick={() => doStep(-stepA)} />
+        )}
+        <div className="relative flex w-28 items-center rounded-xl border border-input bg-secondary/40 px-3 pt-5 pb-1.5 transition-colors focus-within:border-accent">
+          {label && (
+            <span className={`pointer-events-none absolute left-3 font-mono transition-all duration-150 ${floated ? 'top-1 text-[9px] text-accent' : 'top-1/2 -translate-y-1/2 text-[10px] text-muted-foreground'}`}>
+              {label}
+            </span>
+          )}
           <input
-            type="text"
-            inputMode={decimal ? 'decimal' : 'numeric'}
-            value={focused ? raw : fmtNum(value)}
+            type="text" inputMode={decimal ? 'decimal' : 'numeric'}
+            tabIndex={0}
+            value={displayVal}
             onFocus={() => { setFocused(true); setRaw(value === 0 ? '' : String(value)); }}
             onBlur={() => {
               setFocused(false);
               const cleaned = raw.replace(/\s/g, '').replace(',', '.');
-              const v = parseFloat(cleaned);
-              onChange(clamp(Number.isNaN(v) ? 0 : v));
+              const n = parseFloat(cleaned);
+              onChange(clamp(Number.isNaN(n) ? 0 : n));
             }}
             onChange={(e) => {
               const val = e.target.value.replace(/[^\d,.\s]/g, '');
               setRaw(val);
               const cleaned = val.replace(/\s/g, '').replace(',', '.');
-              const v = parseFloat(cleaned);
-              if (!Number.isNaN(v)) onChange(clamp(v));
+              const n = parseFloat(cleaned);
+              if (!Number.isNaN(n)) onChange(clamp(n));
             }}
-            onKeyDown={(e) => { if (e.key === 'Enter' && onEnterNext) { e.preventDefault(); onEnterNext(); } }}
-            className="w-full bg-transparent font-mono text-xs font-semibold outline-none text-center"
+            onKeyDown={handleKeyDown}
+            className="w-full bg-transparent font-mono text-sm font-semibold outline-none"
           />
-          {suffix && <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{suffix}</span>}
+          {suffix && <span className="shrink-0 font-mono text-xs text-muted-foreground ml-1">{suffix}</span>}
         </div>
-        {stepA !== undefined && <StepBtn label="+" title={labelA ? `+${labelA}` : undefined} onClick={() => doStep(stepA)} />}
+        {stepA !== undefined && (
+          <StepBtn label="+" title={labelA ? `+${labelA}` : undefined} onClick={() => doStep(stepA)} />
+        )}
       </div>
     );
   }
@@ -881,47 +914,56 @@ const StepInput = ({
   return (
     <div className="flex flex-col gap-1 w-full">
       <div className="flex items-center gap-1.5">
-        {stepA !== undefined && <StepBtn label="−" title={labelA ? `−${labelA}` : undefined} onClick={() => doStep(-stepA)} />}
-        <div className="flex flex-1 items-center gap-2 rounded-xl border border-input bg-secondary/40 px-3 py-2.5 transition-colors focus-within:border-accent">
-          {label && <span className="shrink-0 font-mono text-[11px] font-medium text-muted-foreground w-[72px]">{label}</span>}
+        {stepA !== undefined && (
+          <StepBtn label="−" title={labelA ? `−${labelA}` : undefined} onClick={() => doStep(-stepA)} />
+        )}
+        {/* Floating-label поле высотой 56px — единообразное */}
+        <div className="relative flex flex-1 items-center rounded-xl border border-input bg-secondary/40 px-3 pt-5 pb-1.5 h-14 transition-colors focus-within:border-accent">
+          {label && (
+            <span className={`pointer-events-none absolute left-3 font-mono transition-all duration-150 ${floated ? 'top-1.5 text-[10px] text-accent/80' : 'top-1/2 -translate-y-1/2 text-[12px] text-muted-foreground'}`}>
+              {label}
+            </span>
+          )}
           <input
-            type="text"
-            inputMode={decimal ? 'decimal' : 'numeric'}
-            value={focused ? raw : fmtNum(value)}
+            type="text" inputMode={decimal ? 'decimal' : 'numeric'}
+            tabIndex={0}
+            value={displayVal}
             onFocus={() => { setFocused(true); setRaw(value === 0 ? '' : String(value)); }}
             onBlur={() => {
               setFocused(false);
               const cleaned = raw.replace(/\s/g, '').replace(',', '.');
-              const v = parseFloat(cleaned);
-              onChange(clamp(Number.isNaN(v) ? 0 : v));
+              const n = parseFloat(cleaned);
+              onChange(clamp(Number.isNaN(n) ? 0 : n));
             }}
             onChange={(e) => {
               const val = e.target.value.replace(/[^\d,.\s]/g, '');
               setRaw(val);
               const cleaned = val.replace(/\s/g, '').replace(',', '.');
-              const v = parseFloat(cleaned);
-              if (!Number.isNaN(v)) onChange(clamp(v));
+              const n = parseFloat(cleaned);
+              if (!Number.isNaN(n)) onChange(clamp(n));
             }}
-            onKeyDown={(e) => { if (e.key === 'Enter' && onEnterNext) { e.preventDefault(); onEnterNext(); } }}
+            onKeyDown={handleKeyDown}
             className="w-full bg-transparent font-mono text-sm font-semibold outline-none"
           />
-          {suffix && <span className="shrink-0 font-mono text-xs text-muted-foreground">{suffix}</span>}
+          {suffix && <span className="shrink-0 font-mono text-xs text-muted-foreground ml-1">{suffix}</span>}
         </div>
-        {stepA !== undefined && <StepBtn label="+" title={labelA ? `+${labelA}` : undefined} onClick={() => doStep(stepA)} />}
+        {stepA !== undefined && (
+          <StepBtn label="+" title={labelA ? `+${labelA}` : undefined} onClick={() => doStep(stepA)} />
+        )}
       </div>
       {stepB !== undefined && (
-        <div className="flex gap-1 pl-[42px] pr-[42px]">
-          <button
+        <div className="flex gap-1 pl-[52px] pr-[52px]">
+          <button tabIndex={-1}
             onClick={() => doStep(-stepB)}
             className="flex-1 cursor-pointer rounded-lg border border-border bg-secondary/60 py-0.5 font-mono text-[9px] font-semibold text-muted-foreground transition-all hover:border-accent hover:bg-accent/10 hover:text-accent active:scale-95"
           >−{labelB ?? stepB}</button>
-          <button
+          <button tabIndex={-1}
             onClick={() => doStep(stepB)}
             className="flex-1 cursor-pointer rounded-lg border border-border bg-secondary/60 py-0.5 font-mono text-[9px] font-semibold text-muted-foreground transition-all hover:border-accent hover:bg-accent/10 hover:text-accent active:scale-95"
           >+{labelB ?? stepB}</button>
         </div>
       )}
-      {hint && <p className="pl-[42px] font-mono text-[9px] text-muted-foreground/60">{hint}</p>}
+      {hint && <p className="pl-[52px] font-mono text-[9px] text-muted-foreground/60">{hint}</p>}
     </div>
   );
 };
@@ -1070,14 +1112,14 @@ const DateEdit = ({
   );
 };
 
-const Toggle = ({ options, value, onChange, vertical = false }: {
+const Toggle = ({ options, value, onChange, vertical = false, h14 = false }: {
   options: { id: string; label: string }[]; value: string;
-  onChange: (v: string) => void; vertical?: boolean;
+  onChange: (v: string) => void; vertical?: boolean; h14?: boolean;
 }) => (
-  <div className={`flex shrink-0 rounded-xl border border-border bg-secondary/60 p-0.5 ${vertical ? 'flex-col' : 'flex-row'}`}>
+  <div className={`flex shrink-0 rounded-xl border border-border bg-secondary/60 p-0.5 ${vertical ? 'flex-col' : 'flex-row'} ${h14 ? 'h-14' : ''}`}>
     {options.map((o) => (
-      <button key={o.id} onClick={() => onChange(o.id)}
-        className={`cursor-pointer select-none rounded-lg px-2.5 font-mono text-xs font-semibold transition-all ${vertical ? 'py-2' : 'py-1.5'} ${value === o.id ? 'bg-accent text-accent-foreground shadow-sm' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}>
+      <button key={o.id} onClick={() => onChange(o.id)} tabIndex={-1}
+        className={`cursor-pointer select-none rounded-lg px-2.5 font-mono text-xs font-semibold transition-all flex-1 flex items-center justify-center ${!h14 && vertical ? 'py-2' : ''} ${!h14 && !vertical ? 'py-1.5' : ''} ${value === o.id ? 'bg-accent text-accent-foreground shadow-sm' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}>
         {o.label}
       </button>
     ))}

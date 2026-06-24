@@ -28,13 +28,13 @@ const Schedule = ({ rows }: { rows: ScheduleRow[] }) => {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left font-mono text-xs uppercase tracking-wider text-muted-foreground">
-              <th className="px-4 py-3 font-medium">№</th>
-              <th className="px-3 py-3 font-medium">Дата списания</th>
-              <th className="px-3 py-3 font-medium text-[10px]">Дней</th>
-              <th className="px-3 py-3 text-right font-medium">Осн. долг</th>
-              <th className="px-3 py-3 text-right font-medium">Проценты</th>
-              <th className="px-3 py-3 text-right font-medium">Платёж</th>
-              <th className="px-4 py-3 text-right font-medium">Остаток</th>
+              <th className="px-4 py-3 font-medium">№ платежа</th>
+              <th className="px-3 py-3 font-medium">Дата платежа</th>
+              <th className="px-3 py-3 font-medium text-[9px]">Дней</th>
+              <th className="px-3 py-3 text-right font-medium">Сумма осн. долга</th>
+              <th className="px-3 py-3 text-right font-medium">Сумма нач. %</th>
+              <th className="px-3 py-3 text-right font-medium">Общая сумма платежа</th>
+              <th className="px-4 py-3 text-right font-medium">Остаток долга</th>
             </tr>
           </thead>
           <tbody className="font-mono">
