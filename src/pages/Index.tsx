@@ -182,7 +182,15 @@ const Index = () => {
                   { id: 'months', label: 'Мес.' },
                 ]}
                 value={termMode}
-                onChange={(v) => setTermMode(v as TermMode)}
+                onChange={(v) => {
+                  const mode = v as TermMode;
+                  if (mode === 'months') {
+                    setMonths(Math.round(years * 12));
+                  } else {
+                    setYears(Math.round((months / 12) * 100) / 100);
+                  }
+                  setTermMode(mode);
+                }}
               />
             </div>
             {termMode === 'years' ? (
