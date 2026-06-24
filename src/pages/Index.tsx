@@ -63,17 +63,45 @@ const Index = () => {
     [result.loan, result.n, result.monthly, rate, startDate],
   );
 
+  const reportText = [
+    'Расчёт ипотеки',
+    `Стоимость недвижимости: ${fmt(price)} ₽`,
+    `Первоначальный взнос: ${fmt(result.down)} ₽ (${result.downRatio.toFixed(1)}%)`,
+    `Срок: ${Math.floor(result.n / 12)} лет (${result.n} мес.)`,
+    `Процентная ставка: ${rate}% годовых`,
+    `Ежемесячный платёж: ${fmt(result.monthly)} ₽`,
+  ].join('\n');
+
   const copyReport = () => {
-    const text = [
-      'Расчёт ипотеки',
-      `Стоимость недвижимости: ${fmt(price)} ₽`,
-      `Первоначальный взнос: ${fmt(result.down)} ₽ (${result.downRatio.toFixed(1)}%)`,
-      `Срок: ${(result.n / 12).toFixed(1)} лет (${result.n} мес.)`,
-      `Процентная ставка: ${rate}% годовых`,
-      `Ежемесячный платёж: ${fmt(result.monthly)} ₽`,
-    ].join('\n');
-    navigator.clipboard.writeText(text);
-    toast.success('Отчёт скопирован в буфер обмена');
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(reportText).then(
+          () => toast.success('Отчёт скопирован'),
+          () => fallbackCopy(reportText),
+        );
+      } else {
+        fallbackCopy(reportText);
+      }
+    } catch {
+      fallbackCopy(reportText);
+    }
+  };
+
+  const fallbackCopy = (text: string) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      document.execCommand('copy');
+      toast.success('Отчёт скопирован');
+    } catch {
+      toast.error('Не удалось скопировать');
+    }
+    document.body.removeChild(ta);
   };
 
   const canExport = schedule.length > 0;
@@ -194,13 +222,21 @@ const Index = () => {
               <Stat icon="Coins" label="Долг + проценты" value={`${fmt(result.total)} ₽`} />
             </div>
 
-            <button
-              onClick={copyReport}
-              className="flex items-center justify-center gap-2 rounded-2xl border border-border bg-card py-4 text-sm font-medium transition-colors hover:bg-secondary/60"
-            >
-              <Icon name="Copy" size={16} />
-              Скопировать краткий отчёт
-            </button>
+            <div className="rounded-2xl border border-border bg-card overflow-hidden">
+              <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider font-mono">Краткий отчёт</span>
+                <button
+                  onClick={copyReport}
+                  className="flex items-center gap-1.5 rounded-lg bg-secondary px-3 py-1.5 text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                >
+                  <Icon name="Copy" size={13} />
+                  Скопировать
+                </button>
+              </div>
+              <pre className="px-4 py-3 font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap select-all">
+                {reportText}
+              </pre>
+            </div>
           </div>
         </div>
 
