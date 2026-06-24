@@ -143,7 +143,16 @@ const Index = () => {
                   { id: 'amount', label: '₽' },
                 ]}
                 value={downMode}
-                onChange={(v) => setDownMode(v as DownMode)}
+                onChange={(v) => {
+                  const mode = v as DownMode;
+                  if (mode === 'percent' && price > 0) {
+                    const pct = Math.round((downAmount / price) * 10000) / 100;
+                    setDownPercent(pct);
+                  } else if (mode === 'amount' && price > 0) {
+                    setDownAmount(Math.round((price * downPercent) / 100));
+                  }
+                  setDownMode(mode);
+                }}
               />
             </div>
             {downMode === 'percent' ? (
@@ -154,7 +163,7 @@ const Index = () => {
             <p className="mt-2 font-mono text-xs text-muted-foreground">
               {downMode === 'percent'
                 ? `= ${fmt((price * downPercent) / 100)} ₽`
-                : `= ${result.downRatio.toFixed(1)} % от стоимости`}
+                : `= ${result.downRatio.toFixed(2)} % от стоимости`}
             </p>
 
             <div className="my-7 h-px bg-border" />
