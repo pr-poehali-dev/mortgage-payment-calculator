@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import Icon from '@/components/ui/icon';
 import { toast } from 'sonner';
 import Schedule from '@/components/Schedule';
-import { buildSchedule, fmt, fmtDate, addMonths, MortgageInput } from '@/lib/mortgage';
+import { buildSchedule, fmt, fmtDate, addMonths, nextWorkDay, MortgageInput } from '@/lib/mortgage';
 import { exportExcel, exportPDF, exportWord } from '@/lib/export';
 
 type DownMode = 'percent' | 'amount';
@@ -23,7 +23,6 @@ interface VariantState {
 
 let _nextId = 2;
 const genId = () => _nextId++;
-
 let _variantSeq = 2;
 const nextVariantNum = () => _variantSeq++;
 
@@ -52,12 +51,22 @@ function makeReportText(name: string, v: VariantState, r: ReturnType<typeof calc
   ].join('\n');
 }
 
+// Парсинг строки ДД.ММ.ГГГГ в Date
+function parseRuDate(s: string): Date | null {
+  const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (!m) return null;
+  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  if (isNaN(d.getTime())) return null;
+  return d;
+}
+
 const SELECT_CLS = 'rounded-lg border border-accent/60 bg-accent/10 px-2 py-1 font-mono text-xs font-semibold text-accent outline-none cursor-pointer hover:bg-accent/20 transition-colors';
 
 const Index = () => {
   const [compareMode, setCompareMode] = useState(false);
   const [variants, setVariants] = useState<VariantState[]>([]);
 
+  // Основная форма
   const [price, setPrice] = useState(8000000);
   const [downMode, setDownMode] = useState<DownMode>('percent');
   const [downPercent, setDownPercent] = useState(20);
@@ -67,12 +76,20 @@ const Index = () => {
   const [years, setYears] = useState(20);
   const [months, setMonths] = useState(240);
 
+  // Редактируемые даты
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0); return d;
+  });
+  // Дата первого платежа — по умолчанию startDate + 1 мес → ближ. раб. день
+  const [firstPaymentDate, setFirstPaymentDate] = useState(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    return nextWorkDay(addMonths(d, 1));
+  });
+
+  // Селекторы отчёта/графика/экспорта
   const [reportVariantId, setReportVariantId] = useState<number | 'all' | null>(null);
   const [scheduleVariantId, setScheduleVariantId] = useState<number | null>(null);
   const [exportVariantId, setExportVariantId] = useState<number | -1 | null>(null);
-
-  const startDate = useMemo(() => new Date(), []);
-  const firstPayment = addMonths(startDate, 1);
 
   const result = useMemo(() => {
     const down = downMode === 'percent' ? (price * downPercent) / 100 : downAmount;
@@ -179,13 +196,6 @@ const Index = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scheduleVariantId, variants, schedule]);
 
-  // Получить вариант по id для экспорта
-  const getExportName = () => {
-    if (!compareMode || exportVariantId === null) return 'Вариант 1';
-    if (exportVariantId === -1) return 'Все варианты';
-    return allVariants.find((x) => x.id === exportVariantId)?.name ?? 'Вариант 1';
-  };
-
   const getExportData = (): { input: MortgageInput; sch: ReturnType<typeof buildSchedule>; name: string }[] => {
     if (!compareMode || exportVariantId === null) return [{ input: mortgageInput, sch: schedule, name: 'Вариант 1' }];
     if (exportVariantId === -1) {
@@ -201,37 +211,71 @@ const Index = () => {
     return [{ input: inp, sch: r.loan > 0 && r.n > 0 ? buildSchedule(inp) : [], name: v.name }];
   };
 
-  const doExport = (type: 'excel' | 'pdf' | 'word') => {
+  const doExport = async (type: 'excel' | 'pdf' | 'word') => {
     if (!canExport) return toast.error('Заполните параметры кредита');
-    getExportData().forEach(({ input, sch, name }) => {
+    for (const { input, sch, name } of getExportData()) {
       if (type === 'excel') exportExcel(input, sch, name);
-      else if (type === 'pdf') exportPDF(input, sch, name);
-      else exportWord(input, sch, name);
-    });
+      else if (type === 'pdf') await exportPDF(input, sch, name);
+      else await exportWord(input, sch, name);
+    }
   };
 
   const showSchedule = canExport || scheduleData.sch.length > 0;
 
+  // Обновить дату первого платежа при смене даты оформления
+  const handleStartDateChange = (d: Date) => {
+    setStartDate(d);
+    setFirstPaymentDate(nextWorkDay(addMonths(d, 1)));
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground">
-      {/* Шапка */}
       <div className="bg-primary text-primary-foreground px-4 py-2 flex items-center gap-2">
         <Icon name="Home" size={13} className="opacity-70 shrink-0" />
         <span className="text-xs font-medium tracking-wide opacity-90">Ипотечный калькулятор — аннуитетный</span>
       </div>
 
       <div className="mx-auto max-w-5xl px-3 pt-3 pb-8 sm:px-4">
-        {/* Основная форма */}
         <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
           {/* Левая — поля ввода */}
           <div className="rounded-2xl border border-border bg-card p-3 sm:p-4">
-            <CompactInput label="Стоимость" suffix="₽" value={price} onChange={setPrice} />
+
+            {/* Стоимость */}
+            <StepInput
+              label="Стоимость"
+              suffix="₽"
+              value={price}
+              onChange={setPrice}
+              stepA={100000}
+              labelA="100 тыс"
+              stepB={price * 0.01}
+              labelB="1%"
+            />
             <div className="my-2.5 h-px bg-border" />
+
+            {/* Первый взнос */}
             <div className="flex items-center gap-2">
               {downMode === 'percent' ? (
-                <CompactInput label="Первый взнос" value={downPercent} onChange={setDownPercent} suffix="%" max={100} />
+                <StepInput
+                  label="Первый взнос"
+                  suffix="%"
+                  value={downPercent}
+                  onChange={setDownPercent}
+                  max={100}
+                  stepA={1}
+                  labelA="1%"
+                />
               ) : (
-                <CompactInput label="Первый взнос" value={downAmount} onChange={setDownAmount} suffix="₽" />
+                <StepInput
+                  label="Первый взнос"
+                  suffix="₽"
+                  value={downAmount}
+                  onChange={setDownAmount}
+                  stepA={100000}
+                  labelA="100 тыс"
+                  stepB={price * 0.01}
+                  labelB="1%"
+                />
               )}
               <Toggle
                 options={[{ id: 'percent', label: '%' }, { id: 'amount', label: '₽' }]}
@@ -248,13 +292,41 @@ const Index = () => {
               {downMode === 'percent' ? `= ${fmt((price * downPercent) / 100)} ₽` : `= ${result.downRatio.toFixed(2)}% от стоимости`}
             </p>
             <div className="my-2.5 h-px bg-border" />
-            <CompactInput label="Ставка" suffix="% год." value={rate} onChange={setRate} step={0.1} />
+
+            {/* Ставка */}
+            <StepInput
+              label="Ставка"
+              suffix="% год."
+              value={rate}
+              onChange={setRate}
+              decimal
+              stepA={1}
+              labelA="1%"
+            />
             <div className="my-2.5 h-px bg-border" />
+
+            {/* Срок */}
             <div className="flex items-center gap-2">
               {termMode === 'years' ? (
-                <CompactInput label="Срок" value={years} onChange={setYears} suffix="лет" max={50} />
+                <StepInput
+                  label="Срок"
+                  suffix="лет"
+                  value={years}
+                  onChange={setYears}
+                  max={50}
+                  stepA={1}
+                  labelA="1 год"
+                />
               ) : (
-                <CompactInput label="Срок" value={months} onChange={setMonths} suffix="мес." max={600} />
+                <StepInput
+                  label="Срок"
+                  suffix="мес."
+                  value={months}
+                  onChange={setMonths}
+                  max={600}
+                  stepA={1}
+                  labelA="1 мес"
+                />
               )}
               <Toggle
                 options={[{ id: 'years', label: 'лет' }, { id: 'months', label: 'мес.' }]}
@@ -267,9 +339,22 @@ const Index = () => {
                 }}
               />
             </div>
-            <div className="mt-2.5 grid grid-cols-2 gap-2">
-              <DateCard icon="FileSignature" label="Оформление" value={fmtDate(startDate)} />
-              <DateCard icon="CalendarClock" label="Первый платёж" value={fmtDate(firstPayment)} />
+            <div className="my-2.5 h-px bg-border" />
+
+            {/* Редактируемые даты */}
+            <div className="grid grid-cols-2 gap-2">
+              <DateEdit
+                icon="FileSignature"
+                label="Оформление"
+                value={startDate}
+                onChange={handleStartDateChange}
+              />
+              <DateEdit
+                icon="CalendarClock"
+                label="Первый платёж"
+                value={firstPaymentDate}
+                onChange={setFirstPaymentDate}
+              />
             </div>
           </div>
 
@@ -338,7 +423,6 @@ const Index = () => {
                   else setExportVariantId(Number(val));
                 }}
                 className={SELECT_CLS}
-                title={`Выбрано: ${getExportName()}`}
               >
                 <option value="__main__">Вариант 1</option>
                 {variants.map((v) => <option key={v.id} value={String(v.id)}>{v.name}</option>)}
@@ -350,8 +434,7 @@ const Index = () => {
           <div className="ml-auto flex items-center gap-2">
             {!compareMode ? (
               <button onClick={enterCompare} className="flex items-center gap-1.5 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground shadow-md transition-all hover:opacity-90 active:scale-95">
-                <Icon name="Columns2" size={15} />
-                Сравнить варианты
+                <Icon name="Columns2" size={15} />Сравнить варианты
               </button>
             ) : (
               <>
@@ -411,11 +494,7 @@ const Index = () => {
 /* ── Таблица сравнения ─────────────────────────────────────── */
 
 const CompareTable = ({
-  variants,
-  results,
-  bestMonthly,
-  onUpdate,
-  onRemove,
+  variants, results, bestMonthly, onUpdate, onRemove,
 }: {
   variants: VariantState[];
   results: ReturnType<typeof calcResult>[];
@@ -468,11 +547,9 @@ const CompareTable = ({
                     <div className="flex items-center justify-between gap-1">
                       <div className="flex items-center gap-1">
                         {isBest && <Icon name="Trophy" size={11} className="text-accent shrink-0" />}
-                        {isMain ? (
-                          <span className="font-mono text-xs font-semibold text-sky-600 dark:text-sky-400">Вариант 1</span>
-                        ) : (
-                          <VariantNameInput value={v.name} onChange={(name) => onUpdate(v.id, { name })} />
-                        )}
+                        {isMain
+                          ? <span className="font-mono text-xs font-semibold text-sky-600 dark:text-sky-400">Вариант 1</span>
+                          : <VariantNameInput value={v.name} onChange={(name) => onUpdate(v.id, { name })} />}
                       </div>
                       {!isMain && (
                         <button onClick={() => onRemove(v.id)} className="text-muted-foreground hover:text-destructive transition-colors shrink-0">
@@ -496,13 +573,12 @@ const CompareTable = ({
                   const canEdit = !isMain && editableKeys.includes(row.key);
                   return (
                     <td key={v.id} className={`px-3 py-2 ${isMain ? 'bg-sky-50/60 dark:bg-sky-950/20' : ''}`}>
-                      {canEdit ? (
-                        <CompareCell variant={v} field={row.key} result={results[idx]} onUpdate={onUpdate} />
-                      ) : (
-                        <span className={`font-mono text-xs font-semibold ${row.key === 'monthly' && isBest ? 'text-accent' : ''}`}>
-                          {fmtCell(row.key, results[idx], v)}
-                        </span>
-                      )}
+                      {canEdit
+                        ? <CompareCell variant={v} field={row.key} onUpdate={onUpdate} />
+                        : <span className={`font-mono text-xs font-semibold ${row.key === 'monthly' && isBest ? 'text-accent' : ''}`}>
+                            {fmtCell(row.key, results[idx], v)}
+                          </span>
+                      }
                     </td>
                   );
                 })}
@@ -515,20 +591,19 @@ const CompareTable = ({
   );
 };
 
-/* Редактируемая ячейка — баги исправлены:
-   1. Enter при пустом raw не восстанавливает старое значение (разрешаем 0)
-   2. Toggle получает актуальный v из замыкания — работает сразу */
+/* ── CompareCell: всегда пересчитывает из актуального v ─────── */
 const CompareCell = ({
   variant: v,
   field,
-  result,
   onUpdate,
 }: {
   variant: VariantState;
   field: string;
-  result: ReturnType<typeof calcResult>;
   onUpdate: (id: number, patch: Partial<VariantState>) => void;
 }) => {
+  // Пересчитываем результат локально — решает баг с Toggle
+  const r = calcResult(v);
+
   const [editing, setEditing] = useState(false);
   const [raw, setRaw] = useState('');
 
@@ -542,19 +617,23 @@ const CompareCell = ({
     }
   };
 
+  // Форматированное отображение — использует актуальный r
   const getFormatted = () => {
     switch (field) {
       case 'rate': return `${v.rate}%`;
       case 'price': return `${fmt(v.price)} ₽`;
-      case 'down': return `${fmt(result.down)} ₽`;
-      case 'n': return `${Math.floor(result.n / 12)} л.${result.n % 12 ? ` ${result.n % 12} м.` : ''}`;
+      case 'down':
+        if (v.downMode === 'percent') return `${v.downPercent}%`;
+        return `${fmt(r.down)} ₽`;
+      case 'n':
+        if (v.termMode === 'years') return `${v.years} л.`;
+        return `${v.months} м.`;
       default: return '';
     }
   };
 
   const commit = (rawStr: string) => {
     setEditing(false);
-    // Разрешаем пустую строку = 0
     const cleaned = rawStr.trim().replace(',', '.');
     const val = cleaned === '' ? 0 : parseFloat(cleaned);
     if (Number.isNaN(val)) return;
@@ -572,8 +651,39 @@ const CompareCell = ({
     }
   };
 
+  // Шаги кнопок +/- для ячейки сравнения
+  const getStepA = () => {
+    switch (field) {
+      case 'price': return 100000;
+      case 'down': return v.downMode === 'percent' ? 1 : 100000;
+      case 'rate': return 1;
+      case 'n': return 1;
+      default: return 0;
+    }
+  };
+
+  const applyStep = (delta: number) => {
+    switch (field) {
+      case 'rate': onUpdate(v.id, { rate: Math.max(0, v.rate + delta) }); break;
+      case 'price': onUpdate(v.id, { price: Math.max(0, v.price + delta) }); break;
+      case 'down':
+        if (v.downMode === 'percent') onUpdate(v.id, { downPercent: Math.max(0, Math.min(100, v.downPercent + delta)) });
+        else onUpdate(v.id, { downAmount: Math.max(0, v.downAmount + delta) });
+        break;
+      case 'n':
+        if (v.termMode === 'years') onUpdate(v.id, { years: Math.max(1, v.years + delta), months: Math.round(Math.max(1, v.years + delta) * 12) });
+        else onUpdate(v.id, { months: Math.max(1, v.months + delta), years: Math.round((Math.max(1, v.months + delta) / 12) * 100) / 100 });
+        break;
+    }
+  };
+
+  const step = getStepA();
+
   return (
     <div className="flex items-center gap-1 flex-wrap">
+      {/* Кнопки -/+ */}
+      <button onClick={() => applyStep(-step)} className="flex h-5 w-5 items-center justify-center rounded bg-secondary text-muted-foreground hover:bg-accent/20 hover:text-accent transition-colors text-xs font-bold">−</button>
+
       <div className="flex items-center rounded-lg border border-transparent bg-secondary/60 focus-within:border-accent overflow-hidden">
         {editing ? (
           <input
@@ -592,6 +702,10 @@ const CompareCell = ({
           </button>
         )}
       </div>
+
+      <button onClick={() => applyStep(step)} className="flex h-5 w-5 items-center justify-center rounded bg-secondary text-muted-foreground hover:bg-accent/20 hover:text-accent transition-colors text-xs font-bold">+</button>
+
+      {/* Toggle для взноса */}
       {field === 'down' && (
         <Toggle
           options={[{ id: 'percent', label: '%' }, { id: 'amount', label: '₽' }]}
@@ -604,6 +718,7 @@ const CompareCell = ({
           }}
         />
       )}
+      {/* Toggle для срока */}
       {field === 'n' && (
         <Toggle
           options={[{ id: 'years', label: 'л' }, { id: 'months', label: 'м' }]}
@@ -643,48 +758,137 @@ const VariantNameInput = ({ value, onChange }: { value: string; onChange: (v: st
 
 /* ── Вспомогательные компоненты ────────────────────────────── */
 
-// Компактное поле ввода — label слева, значение + единицы в строку
-const CompactInput = ({ value, onChange, label, suffix, step = 1, max }: {
+const fmtNum = (n: number) => {
+  if (Number.isNaN(n) || n === 0) return '';
+  const hasDecimals = n % 1 !== 0;
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: hasDecimals ? 2 : 0 }).format(n);
+};
+
+// Поле ввода с кнопками +/-
+const StepInput = ({
+  value, onChange, label, suffix, max, decimal = false,
+  stepA, labelA, stepB, labelB,
+}: {
   value: number; onChange: (n: number) => void;
-  label?: string; suffix?: string; step?: number; max?: number;
+  label?: string; suffix?: string; max?: number; decimal?: boolean;
+  stepA?: number; labelA?: string;
+  stepB?: number; labelB?: string;
 }) => {
-  const isDecimal = step < 1;
   const [focused, setFocused] = useState(false);
   const [raw, setRaw] = useState('');
 
-  const fmtVal = (n: number) => {
-    if (Number.isNaN(n) || n === 0) return '';
-    const hasDecimals = n % 1 !== 0;
-    return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: hasDecimals ? 2 : 0 }).format(n);
+  const clamp = (v: number) => {
+    if (max !== undefined && v > max) return max;
+    if (v < 0) return 0;
+    return v;
   };
 
+  const doStep = (delta: number) => onChange(clamp(parseFloat((value + delta).toFixed(4))));
+
   return (
-    <div className="flex items-center gap-2 rounded-xl border border-input bg-secondary/40 px-3 py-2 transition-colors focus-within:border-accent">
-      {label && <span className="shrink-0 font-mono text-xs text-muted-foreground w-20">{label}</span>}
-      <input
-        type="text"
-        inputMode={isDecimal ? 'decimal' : 'numeric'}
-        value={focused ? raw : fmtVal(value)}
-        onFocus={() => { setFocused(true); setRaw(value === 0 ? '' : String(value)); }}
-        onBlur={() => {
-          setFocused(false);
-          const cleaned = raw.replace(/\s/g, '').replace(',', '.');
-          let v = parseFloat(cleaned);
-          if (max !== undefined && v > max) v = max;
-          onChange(Number.isNaN(v) ? 0 : v);
-        }}
-        onChange={(e) => {
-          const val = e.target.value.replace(/[^\d,.\s]/g, '');
-          setRaw(val);
-          const cleaned = val.replace(/\s/g, '').replace(',', '.');
-          let v = parseFloat(cleaned);
-          if (max !== undefined && v > max) v = max;
-          if (!Number.isNaN(v)) onChange(v);
-        }}
-        className="w-full bg-transparent font-mono text-sm font-semibold outline-none"
-      />
-      {suffix && <span className="shrink-0 font-mono text-xs text-muted-foreground">{suffix}</span>}
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2 rounded-xl border border-input bg-secondary/40 px-3 py-2 transition-colors focus-within:border-accent">
+        {label && <span className="shrink-0 font-mono text-xs text-muted-foreground w-20">{label}</span>}
+        <input
+          type="text"
+          inputMode={decimal ? 'decimal' : 'numeric'}
+          value={focused ? raw : fmtNum(value)}
+          onFocus={() => { setFocused(true); setRaw(value === 0 ? '' : String(value)); }}
+          onBlur={() => {
+            setFocused(false);
+            const cleaned = raw.replace(/\s/g, '').replace(',', '.');
+            const v = parseFloat(cleaned);
+            onChange(clamp(Number.isNaN(v) ? 0 : v));
+          }}
+          onChange={(e) => {
+            const val = e.target.value.replace(/[^\d,.\s]/g, '');
+            setRaw(val);
+            const cleaned = val.replace(/\s/g, '').replace(',', '.');
+            const v = parseFloat(cleaned);
+            if (!Number.isNaN(v)) onChange(clamp(v));
+          }}
+          className="w-full bg-transparent font-mono text-sm font-semibold outline-none"
+        />
+        {suffix && <span className="shrink-0 font-mono text-xs text-muted-foreground">{suffix}</span>}
+      </div>
+      {/* Кнопки шагов */}
+      {(stepA !== undefined || stepB !== undefined) && (
+        <div className="flex gap-1">
+          {stepA !== undefined && (
+            <>
+              <StepBtn label={`−${labelA ?? stepA}`} onClick={() => doStep(-stepA)} />
+              <StepBtn label={`+${labelA ?? stepA}`} onClick={() => doStep(stepA)} />
+            </>
+          )}
+          {stepB !== undefined && (
+            <>
+              <StepBtn label={`−${labelB ?? stepB}`} onClick={() => doStep(-stepB)} />
+              <StepBtn label={`+${labelB ?? stepB}`} onClick={() => doStep(stepB)} />
+            </>
+          )}
+        </div>
+      )}
     </div>
+  );
+};
+
+const StepBtn = ({ label, onClick }: { label: string; onClick: () => void }) => (
+  <button
+    onClick={onClick}
+    className="flex-1 rounded-lg border border-border bg-secondary/50 px-1 py-0.5 font-mono text-[9px] font-medium text-muted-foreground transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-accent active:scale-95"
+  >
+    {label}
+  </button>
+);
+
+// Редактируемая дата
+const DateEdit = ({
+  icon, label, value, onChange,
+}: {
+  icon: string; label: string; value: Date; onChange: (d: Date) => void;
+}) => {
+  const [editing, setEditing] = useState(false);
+  const [raw, setRaw] = useState('');
+
+  const display = fmtDate(value);
+
+  const commit = (s: string) => {
+    setEditing(false);
+    const parsed = parseRuDate(s.trim());
+    if (parsed) onChange(parsed);
+  };
+
+  if (editing) {
+    return (
+      <div className="rounded-xl border border-accent bg-secondary/30 px-2.5 py-2">
+        <div className="mb-0.5 flex items-center gap-1 text-muted-foreground">
+          <Icon name={icon} size={11} /><span className="text-[10px]">{label}</span>
+        </div>
+        <input
+          autoFocus
+          type="text"
+          value={raw}
+          onChange={(e) => setRaw(e.target.value)}
+          onBlur={() => commit(raw)}
+          onKeyDown={(e) => { if (e.key === 'Enter') commit(raw); if (e.key === 'Escape') setEditing(false); }}
+          placeholder="ДД.ММ.ГГГГ"
+          className="w-full bg-transparent font-mono text-xs font-medium outline-none"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => { setRaw(display); setEditing(true); }}
+      className="rounded-xl border border-border bg-secondary/30 px-2.5 py-2 text-left w-full hover:border-accent transition-colors"
+    >
+      <div className="mb-0.5 flex items-center gap-1 text-muted-foreground">
+        <Icon name={icon} size={11} /><span className="text-[10px]">{label}</span>
+      </div>
+      <span className="font-mono text-xs font-medium">{display}</span>
+      <span className="ml-1 font-mono text-[9px] text-muted-foreground/50">✎</span>
+    </button>
   );
 };
 
@@ -702,7 +906,6 @@ const Toggle = ({ options, value, onChange, vertical = false }: {
   </div>
 );
 
-// Компактная строка статистики без иконок
 const MiniStat = ({ label, value, accent, last }: { label: string; value: string; accent?: boolean; last?: boolean }) => (
   <div className={`flex items-center justify-between py-1 ${!last ? 'border-b border-sky-100 dark:border-sky-900' : ''}`}>
     <span className="text-xs text-muted-foreground">{label}</span>
@@ -710,22 +913,10 @@ const MiniStat = ({ label, value, accent, last }: { label: string; value: string
   </div>
 );
 
-const DateCard = ({ icon, label, value }: { icon: string; label: string; value: string }) => (
-  <div className="rounded-xl border border-border bg-secondary/30 px-2.5 py-2">
-    <div className="mb-0.5 flex items-center gap-1 text-muted-foreground">
-      <Icon name={icon} size={11} /><span className="text-[10px]">{label}</span>
-    </div>
-    <span className="font-mono text-xs font-medium">{value}</span>
-  </div>
-);
-
 const ExportBtn = ({ label, onClick }: { label: string; onClick: () => void }) => (
-  <button
-    onClick={onClick}
-    className="flex items-center gap-1.5 rounded-xl border-2 border-primary/40 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary transition-all hover:border-primary hover:bg-primary/20 active:scale-95"
-  >
-    <Icon name="Download" size={13} />
-    {label}
+  <button onClick={onClick}
+    className="flex items-center gap-1.5 rounded-xl border-2 border-primary/40 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary transition-all hover:border-primary hover:bg-primary/20 active:scale-95">
+    <Icon name="Download" size={13} />{label}
   </button>
 );
 
