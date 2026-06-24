@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import Icon from '@/components/ui/icon';
 import { toast } from 'sonner';
 import Schedule from '@/components/Schedule';
@@ -69,9 +69,21 @@ function parseRuDate(s: string): Date | null {
 
 const SELECT_CLS = 'rounded-lg border border-accent/60 bg-accent/10 px-2 py-1 font-mono text-xs font-semibold text-accent outline-none cursor-pointer hover:bg-accent/20 transition-colors';
 
+// Хелпер: переместить фокус на первый input внутри элемента
+function focusInput(el: HTMLElement | null) {
+  el?.querySelector<HTMLInputElement>('input')?.focus();
+}
+
 const Index = () => {
   const [compareMode, setCompareMode] = useState(false);
   const [variants, setVariants] = useState<VariantState[]>([]);
+
+  // Refs для цепочки Enter→next
+  const refPrice = useRef<HTMLDivElement>(null);
+  const refDown = useRef<HTMLDivElement>(null);
+  const refRate = useRef<HTMLDivElement>(null);
+  const refTerm = useRef<HTMLDivElement>(null);
+  const refInterestOnly = useRef<HTMLDivElement>(null);
 
   // Основная форма
   const [price, setPrice] = useState(8000000);
@@ -249,39 +261,44 @@ const Index = () => {
       <div className="mx-auto max-w-5xl px-3 pt-3 pb-8 sm:px-4">
         <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
           {/* Левая — поля ввода */}
-          <div className="rounded-2xl border border-border bg-card p-3 sm:p-4">
+          <div className="rounded-2xl border border-border bg-card p-3 sm:p-4 space-y-2.5">
 
             {/* Стоимость */}
-            <StepInput
-              label="Стоимость"
-              suffix="₽"
-              value={price}
-              onChange={setPrice}
-              stepA={100000}
-              labelA="100 тыс"
-            />
-            <div className="my-2.5 h-px bg-border" />
+            <div ref={refPrice}>
+              <StepInput
+                label="Стоимость"
+                suffix="₽"
+                value={price}
+                onChange={setPrice}
+                stepA={100000}
+                labelA="100 тыс"
+                onEnterNext={() => focusInput(refDown.current)}
+              />
+            </div>
+            <div className="h-px bg-border" />
 
             {/* Первый взнос */}
-            <div className="flex items-center gap-2">
+            <div ref={refDown} className="flex items-center gap-2">
               {downMode === 'percent' ? (
                 <StepInput
-                  label="Первый взнос"
+                  label="Взнос"
                   suffix="%"
                   value={downPercent}
                   onChange={setDownPercent}
                   max={100}
                   stepA={1}
                   labelA="1%"
+                  onEnterNext={() => focusInput(refRate.current)}
                 />
               ) : (
                 <StepInput
-                  label="Первый взнос"
+                  label="Взнос"
                   suffix="₽"
                   value={downAmount}
                   onChange={setDownAmount}
                   stepA={100000}
                   labelA="100 тыс"
+                  onEnterNext={() => focusInput(refRate.current)}
                 />
               )}
               <Toggle
@@ -295,25 +312,28 @@ const Index = () => {
                 }}
               />
             </div>
-            <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+            <p className="font-mono text-[10px] text-muted-foreground pl-[42px]">
               {downMode === 'percent' ? `= ${fmt((price * downPercent) / 100)} ₽` : `= ${result.downRatio.toFixed(2)}% от стоимости`}
             </p>
-            <div className="my-2.5 h-px bg-border" />
+            <div className="h-px bg-border" />
 
             {/* Ставка */}
-            <StepInput
-              label="Ставка"
-              suffix="% год."
-              value={rate}
-              onChange={setRate}
-              decimal
-              stepA={1}
-              labelA="1%"
-            />
-            <div className="my-2.5 h-px bg-border" />
+            <div ref={refRate}>
+              <StepInput
+                label="Ставка"
+                suffix="% год."
+                value={rate}
+                onChange={setRate}
+                decimal
+                stepA={1}
+                labelA="1%"
+                onEnterNext={() => focusInput(refTerm.current)}
+              />
+            </div>
+            <div className="h-px bg-border" />
 
             {/* Срок */}
-            <div className="flex items-center gap-2">
+            <div ref={refTerm} className="flex items-center gap-2">
               {termMode === 'years' ? (
                 <StepInput
                   label="Срок"
@@ -323,6 +343,7 @@ const Index = () => {
                   max={50}
                   stepA={1}
                   labelA="1 год"
+                  onEnterNext={() => focusInput(refInterestOnly.current)}
                 />
               ) : (
                 <StepInput
@@ -333,6 +354,7 @@ const Index = () => {
                   max={600}
                   stepA={1}
                   labelA="1 мес"
+                  onEnterNext={() => focusInput(refInterestOnly.current)}
                 />
               )}
               <Toggle
@@ -346,20 +368,24 @@ const Index = () => {
                 }}
               />
             </div>
-            <div className="my-2.5 h-px bg-border" />
+            <div className="h-px bg-border" />
 
-            {/* Льготный период */}
-            <StepInput
-              label="Льготный пер."
-              suffix="мес."
-              value={interestOnlyMonths}
-              onChange={setInterestOnlyMonths}
-              max={result.n}
-              stepA={1}
-              labelA="1 мес"
-              hint="Первые N платежей — только проценты"
-            />
-            <div className="my-2.5 h-px bg-border" />
+            {/* Только проценты + Даты — одна строка */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <div ref={refInterestOnly}>
+                <StepInput
+                  label="Период только %"
+                  suffix="мес."
+                  value={interestOnlyMonths}
+                  onChange={setInterestOnlyMonths}
+                  max={result.n}
+                  stepA={1}
+                  labelA="1 мес"
+                  compact
+                />
+              </div>
+            </div>
+            <div className="h-px bg-border" />
 
             {/* Редактируемые даты */}
             <div className="grid grid-cols-2 gap-2">
@@ -372,7 +398,7 @@ const Index = () => {
               <DateEdit
                 icon="CalendarClock"
                 label="Дата списания"
-                hint="Число месяца ежемесячного списания"
+                hint="Число месяца ежемесячного платежа"
                 value={firstPaymentDate}
                 onChange={setFirstPaymentDate}
               />
@@ -454,17 +480,17 @@ const Index = () => {
 
           <div className="ml-auto flex items-center gap-2">
             {!compareMode ? (
-              <button onClick={enterCompare} className="flex items-center gap-1.5 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground shadow-md transition-all hover:opacity-90 active:scale-95">
+              <button onClick={enterCompare} className="flex cursor-pointer items-center gap-1.5 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground shadow-md transition-all hover:opacity-90 active:scale-95">
                 <Icon name="Columns2" size={15} />Сравнить варианты
               </button>
             ) : (
               <>
                 {variants.length < 9 && (
-                  <button onClick={addVariant} className="flex items-center gap-1.5 rounded-xl border border-dashed border-accent/50 bg-card px-3 py-2.5 text-sm font-medium text-accent transition-all hover:bg-accent/10">
+                  <button onClick={addVariant} className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-dashed border-accent/50 bg-card px-3 py-2.5 text-sm font-medium text-accent shadow-sm transition-all hover:bg-accent/10 active:scale-95">
                     <Icon name="Plus" size={15} />Добавить
                   </button>
                 )}
-                <button onClick={exitCompare} className="flex items-center gap-1.5 rounded-xl border border-border bg-secondary/60 px-3 py-2.5 text-sm font-medium transition-all hover:border-destructive hover:text-destructive">
+                <button onClick={exitCompare} className="flex cursor-pointer items-center gap-1.5 rounded-xl border border-border bg-secondary/60 px-3 py-2.5 text-sm font-medium shadow-sm transition-all hover:border-destructive hover:text-destructive active:scale-95">
                   <Icon name="X" size={15} />Закрыть
                 </button>
               </>
@@ -703,7 +729,7 @@ const CompareCell = ({
   return (
     <div className="flex items-center gap-1 flex-wrap">
       {/* Кнопки -/+ */}
-      <button onClick={() => applyStep(-step)} className="flex h-5 w-5 items-center justify-center rounded bg-secondary text-muted-foreground hover:bg-accent/20 hover:text-accent transition-colors text-xs font-bold">−</button>
+      <button onClick={() => applyStep(-step)} className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-lg border border-border bg-secondary font-bold text-xs text-foreground shadow-sm transition-all hover:border-accent hover:bg-accent/10 hover:text-accent active:scale-95">−</button>
 
       <div className="flex items-center rounded-lg border border-transparent bg-secondary/60 focus-within:border-accent overflow-hidden">
         {editing ? (
@@ -724,7 +750,7 @@ const CompareCell = ({
         )}
       </div>
 
-      <button onClick={() => applyStep(step)} className="flex h-5 w-5 items-center justify-center rounded bg-secondary text-muted-foreground hover:bg-accent/20 hover:text-accent transition-colors text-xs font-bold">+</button>
+      <button onClick={() => applyStep(step)} className="flex h-6 w-6 cursor-pointer items-center justify-center rounded-lg border border-border bg-secondary font-bold text-xs text-foreground shadow-sm transition-all hover:border-accent hover:bg-accent/10 hover:text-accent active:scale-95">+</button>
 
       {/* Toggle для взноса */}
       {field === 'down' && (
@@ -785,15 +811,26 @@ const fmtNum = (n: number) => {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: hasDecimals ? 2 : 0 }).format(n);
 };
 
+// Кнопка шага — визуально кликабельная
+const StepBtn = ({ label, title, onClick }: { label: string; title?: string; onClick: () => void }) => (
+  <button
+    onClick={onClick}
+    title={title}
+    className="flex h-9 w-9 shrink-0 cursor-pointer select-none items-center justify-center rounded-xl border border-border bg-secondary font-bold text-base text-foreground shadow-sm transition-all hover:border-accent hover:bg-accent/10 hover:text-accent active:scale-95 active:shadow-none"
+  >{label}</button>
+);
+
 const StepInput = ({
   value, onChange, label, suffix, max, decimal = false,
-  stepA, labelA, stepB, labelB, hint,
+  stepA, labelA, stepB, labelB, hint, compact = false, onEnterNext,
 }: {
   value: number; onChange: (n: number) => void;
   label?: string; suffix?: string; max?: number; decimal?: boolean;
   stepA?: number; labelA?: string;
   stepB?: number; labelB?: string;
   hint?: string;
+  compact?: boolean;  // уменьшенный режим (поле льготного периода)
+  onEnterNext?: () => void; // переместить фокус на следующее поле
 }) => {
   const [focused, setFocused] = useState(false);
   const [raw, setRaw] = useState('');
@@ -806,19 +843,13 @@ const StepInput = ({
 
   const doStep = (delta: number) => onChange(clamp(parseFloat((value + delta).toFixed(4))));
 
-  return (
-    <div className="flex flex-col gap-1 w-full">
-      {/* Поле с кнопками по бокам — основной шаг stepA */}
-      <div className="flex items-center gap-1">
-        {stepA !== undefined && (
-          <button
-            onClick={() => doStep(-stepA)}
-            title={labelA ? `−${labelA}` : undefined}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:bg-accent/20 hover:text-accent transition-colors font-bold text-sm"
-          >−</button>
-        )}
-        <div className="flex flex-1 items-center gap-2 rounded-xl border border-input bg-secondary/40 px-3 py-2 transition-colors focus-within:border-accent">
-          {label && <span className="shrink-0 font-mono text-xs text-muted-foreground w-20">{label}</span>}
+  if (compact) {
+    // Компактный вид: надпись + поле + кнопки в одну строку, всё мелкое
+    return (
+      <div className="flex items-center gap-1.5">
+        {label && <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{label}</span>}
+        {stepA !== undefined && <StepBtn label="−" title={labelA ? `−${labelA}` : undefined} onClick={() => doStep(-stepA)} />}
+        <div className="flex w-20 items-center gap-1 rounded-lg border border-input bg-secondary/40 px-2 py-1.5 text-center transition-colors focus-within:border-accent">
           <input
             type="text"
             inputMode={decimal ? 'decimal' : 'numeric'}
@@ -837,32 +868,60 @@ const StepInput = ({
               const v = parseFloat(cleaned);
               if (!Number.isNaN(v)) onChange(clamp(v));
             }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && onEnterNext) { e.preventDefault(); onEnterNext(); } }}
+            className="w-full bg-transparent font-mono text-xs font-semibold outline-none text-center"
+          />
+          {suffix && <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{suffix}</span>}
+        </div>
+        {stepA !== undefined && <StepBtn label="+" title={labelA ? `+${labelA}` : undefined} onClick={() => doStep(stepA)} />}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1 w-full">
+      <div className="flex items-center gap-1.5">
+        {stepA !== undefined && <StepBtn label="−" title={labelA ? `−${labelA}` : undefined} onClick={() => doStep(-stepA)} />}
+        <div className="flex flex-1 items-center gap-2 rounded-xl border border-input bg-secondary/40 px-3 py-2.5 transition-colors focus-within:border-accent">
+          {label && <span className="shrink-0 font-mono text-[11px] font-medium text-muted-foreground w-[72px]">{label}</span>}
+          <input
+            type="text"
+            inputMode={decimal ? 'decimal' : 'numeric'}
+            value={focused ? raw : fmtNum(value)}
+            onFocus={() => { setFocused(true); setRaw(value === 0 ? '' : String(value)); }}
+            onBlur={() => {
+              setFocused(false);
+              const cleaned = raw.replace(/\s/g, '').replace(',', '.');
+              const v = parseFloat(cleaned);
+              onChange(clamp(Number.isNaN(v) ? 0 : v));
+            }}
+            onChange={(e) => {
+              const val = e.target.value.replace(/[^\d,.\s]/g, '');
+              setRaw(val);
+              const cleaned = val.replace(/\s/g, '').replace(',', '.');
+              const v = parseFloat(cleaned);
+              if (!Number.isNaN(v)) onChange(clamp(v));
+            }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && onEnterNext) { e.preventDefault(); onEnterNext(); } }}
             className="w-full bg-transparent font-mono text-sm font-semibold outline-none"
           />
           {suffix && <span className="shrink-0 font-mono text-xs text-muted-foreground">{suffix}</span>}
         </div>
-        {stepA !== undefined && (
-          <button
-            onClick={() => doStep(stepA)}
-            title={labelA ? `+${labelA}` : undefined}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:bg-accent/20 hover:text-accent transition-colors font-bold text-sm"
-          >+</button>
-        )}
+        {stepA !== undefined && <StepBtn label="+" title={labelA ? `+${labelA}` : undefined} onClick={() => doStep(stepA)} />}
       </div>
-      {/* Дополнительный шаг stepB — маленькие кнопки */}
       {stepB !== undefined && (
-        <div className="flex gap-1 pl-9 pr-9">
+        <div className="flex gap-1 pl-[42px] pr-[42px]">
           <button
             onClick={() => doStep(-stepB)}
-            className="flex-1 rounded-md border border-border bg-secondary/50 py-0.5 font-mono text-[9px] font-medium text-muted-foreground transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-accent active:scale-95"
+            className="flex-1 cursor-pointer rounded-lg border border-border bg-secondary/60 py-0.5 font-mono text-[9px] font-semibold text-muted-foreground transition-all hover:border-accent hover:bg-accent/10 hover:text-accent active:scale-95"
           >−{labelB ?? stepB}</button>
           <button
             onClick={() => doStep(stepB)}
-            className="flex-1 rounded-md border border-border bg-secondary/50 py-0.5 font-mono text-[9px] font-medium text-muted-foreground transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-accent active:scale-95"
+            className="flex-1 cursor-pointer rounded-lg border border-border bg-secondary/60 py-0.5 font-mono text-[9px] font-semibold text-muted-foreground transition-all hover:border-accent hover:bg-accent/10 hover:text-accent active:scale-95"
           >+{labelB ?? stepB}</button>
         </div>
       )}
-      {hint && <p className="pl-9 font-mono text-[9px] text-muted-foreground/60">{hint}</p>}
+      {hint && <p className="pl-[42px] font-mono text-[9px] text-muted-foreground/60">{hint}</p>}
     </div>
   );
 };
@@ -1018,7 +1077,7 @@ const Toggle = ({ options, value, onChange, vertical = false }: {
   <div className={`flex shrink-0 rounded-xl border border-border bg-secondary/60 p-0.5 ${vertical ? 'flex-col' : 'flex-row'}`}>
     {options.map((o) => (
       <button key={o.id} onClick={() => onChange(o.id)}
-        className={`rounded-lg px-2 font-mono text-xs font-semibold transition-all ${vertical ? 'py-1.5' : 'py-1'} ${value === o.id ? 'bg-accent text-accent-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+        className={`cursor-pointer select-none rounded-lg px-2.5 font-mono text-xs font-semibold transition-all ${vertical ? 'py-2' : 'py-1.5'} ${value === o.id ? 'bg-accent text-accent-foreground shadow-sm' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`}>
         {o.label}
       </button>
     ))}
@@ -1034,7 +1093,7 @@ const MiniStat = ({ label, value, accent, last }: { label: string; value: string
 
 const ExportBtn = ({ label, onClick }: { label: string; onClick: () => void }) => (
   <button onClick={onClick}
-    className="flex items-center gap-1.5 rounded-xl border-2 border-primary/40 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary transition-all hover:border-primary hover:bg-primary/20 active:scale-95">
+    className="flex cursor-pointer select-none items-center gap-1.5 rounded-xl border-2 border-primary/40 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary shadow-sm transition-all hover:border-primary hover:bg-primary/20 active:scale-95">
     <Icon name="Download" size={13} />{label}
   </button>
 );

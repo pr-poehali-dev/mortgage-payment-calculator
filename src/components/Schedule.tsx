@@ -29,8 +29,8 @@ const Schedule = ({ rows }: { rows: ScheduleRow[] }) => {
           <thead>
             <tr className="border-b border-border text-left font-mono text-xs uppercase tracking-wider text-muted-foreground">
               <th className="px-4 py-3 font-medium">№</th>
-              <th className="px-3 py-3 font-medium">Начисление</th>
-              <th className="px-3 py-3 font-medium">Списание</th>
+              <th className="px-3 py-3 font-medium">Дата списания</th>
+              <th className="px-3 py-3 font-medium text-[10px]">Дней</th>
               <th className="px-3 py-3 text-right font-medium">Осн. долг</th>
               <th className="px-3 py-3 text-right font-medium">Проценты</th>
               <th className="px-3 py-3 text-right font-medium">Платёж</th>
@@ -49,8 +49,8 @@ const Schedule = ({ rows }: { rows: ScheduleRow[] }) => {
                     <span className="ml-1 font-mono text-[9px] text-amber-600 dark:text-amber-400 font-semibold">%</span>
                   )}
                 </td>
-                <td className="px-3 py-2 text-muted-foreground/70">{fmtDate(r.accrualDate)}</td>
-                <td className="px-3 py-2 font-medium">{fmtDate(r.date)}</td>
+                <td className="px-3 py-2">{fmtDate(r.date)}</td>
+                <td className="px-3 py-2 text-muted-foreground/60 text-xs">{r.days}</td>
                 <td className="px-3 py-2 text-right">{r.principal > 0 ? fmt(r.principal) : '—'}</td>
                 <td className="px-3 py-2 text-right text-accent">{fmt(r.interest)}</td>
                 <td className="px-3 py-2 text-right font-semibold">{fmt(r.payment)}</td>
@@ -73,7 +73,7 @@ const Schedule = ({ rows }: { rows: ScheduleRow[] }) => {
       {rows.length > 12 && (
         <button
           onClick={() => setExpanded((e) => !e)}
-          className="flex w-full items-center justify-center gap-2 border-t border-border py-4 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary/40 hover:text-foreground"
+          className="flex w-full cursor-pointer items-center justify-center gap-2 border-t border-border py-4 text-sm font-medium text-muted-foreground transition-colors hover:bg-secondary/40 hover:text-foreground"
         >
           <Icon name={expanded ? 'ChevronUp' : 'ChevronDown'} size={16} />
           {expanded ? 'Свернуть' : `Показать все ${rows.length} платежей`}

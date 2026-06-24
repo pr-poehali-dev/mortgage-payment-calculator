@@ -8,7 +8,7 @@ export interface MortgageInput {
   total: number;
   overpay: number;
   startDate: Date;
-  firstPaymentDate?: Date;   // дата ежемесячного списания (5-е число месяца и т.п.)
+  firstPaymentDate?: Date;     // дата ежемесячного списания (=число месяца)
   interestOnlyMonths?: number; // кол-во первых платежей только проценты
 }
 
@@ -21,6 +21,7 @@ export interface ScheduleRow {
   principal: number;
   balance: number;
   interestOnly: boolean;
+  days: number;      // фактическое количество дней начисления
 }
 
 export const fmt = (n: number) =>
@@ -37,6 +38,10 @@ export const addMonths = (d: Date, n: number) => {
   r.setMonth(r.getMonth() + n);
   return r;
 };
+
+function daysBetween(a: Date, b: Date): number {
+  return Math.round((b.getTime() - a.getTime()) / 86400000);
+}
 
 // ── Праздники РФ ──────────────────────────────────────────────
 const FIXED_HOLIDAYS = new Set([
@@ -72,72 +77,77 @@ export function nextWorkDay(d: Date): Date {
 }
 
 export function buildSchedule(input: MortgageInput): ScheduleRow[] {
-  const { loan, rate, months, monthly, startDate, firstPaymentDate, interestOnlyMonths = 0 } = input;
-  const i = rate / 100 / 12;
+  const { loan, rate, months, startDate, firstPaymentDate, interestOnlyMonths = 0 } = input;
+  const annualRate = rate / 100;
   let balance = loan;
   const rows: ScheduleRow[] = [];
 
-  // Базовая дата начисления: если задана firstPaymentDate — используем её день месяца.
-  // Проценты начисляются к фиксированному числу (день firstPaymentDate).
-  // Дата списания = nextWorkDay от даты начисления.
-  // Если firstPaymentDate не задана — отсчёт от startDate + m месяцев.
+  // База для дат начисления: если задана firstPaymentDate — первое начисление в её день,
+  // иначе startDate + 1 мес.
   const base = firstPaymentDate ?? addMonths(startDate, 1);
 
-  // Пересчитываем аннуитет с учётом interestOnlyMonths:
-  // Первые interestOnlyMonths месяцев — только проценты, остаток не уменьшается.
-  // Затем оставшийся долг гасится за (months - interestOnlyMonths) месяцев по аннуитету.
-  const effectiveMonths = months - interestOnlyMonths;
+  // Рассчитываем аннуитетный платёж для обычного (не льготного) периода.
+  // После льготного периода аннуитет считается по оставшемуся долгу и остаточному сроку.
   const calcMonthly = (bal: number, n: number) => {
     if (n <= 0 || bal <= 0) return 0;
-    const r = rate / 100 / 12;
+    const r = annualRate / 12;
     if (r === 0) return bal / n;
     return (bal * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
   };
 
-  // Аннуитетный платёж рассчитывается от исходной суммы на эффективный срок
-  const annuityPayment = interestOnlyMonths > 0
-    ? calcMonthly(loan, effectiveMonths)
-    : monthly;
+  // Аннуитет на весь срок после льготного периода (фиксируется в начале)
+  const effectiveMonths = months - interestOnlyMonths;
+  const fixedAnnuity = calcMonthly(loan, effectiveMonths);
+
+  // Предыдущая дата начисления — для расчёта фактических дней
+  // Первый период: от startDate до первого accrualDate
+  let prevAccrualDate: Date = new Date(startDate);
+  prevAccrualDate.setHours(0, 0, 0, 0);
 
   for (let m = 1; m <= months; m++) {
-    const interest = balance * i;
+    // Дата начисления этого платежа (фиксированное число месяца)
+    const accrualDate = addMonths(base, m - 1);
+    const days = daysBetween(prevAccrualDate, accrualDate);
+
+    // Проценты за фактическое количество дней
+    // Формула: баланс * годовая_ставка / 365 * дней
+    const interest = balance * annualRate / 365 * days;
+
     const isInterestOnly = m <= interestOnlyMonths;
 
     let principal: number;
     let payment: number;
 
     if (isInterestOnly) {
-      // Только проценты — тело долга не гасится
       principal = 0;
       payment = interest;
     } else {
-      // Аннуитет от оставшегося баланса
-      const remainingMonths = months - m + 1 - interestOnlyMonths;
-      const mp = remainingMonths <= 0
-        ? balance + interest
-        : annuityPayment;
-      principal = mp - interest;
+      // После льготного периода — аннуитет, но проценты уже посчитаны по дням
+      // Основной долг = фиксированный_аннуитет - проценты_за_месяц
+      // Используем аннуитет, зафиксированный на начало обычного периода
+      const annuity = interestOnlyMonths > 0 ? fixedAnnuity : calcMonthly(loan, effectiveMonths);
+      principal = annuity - interest;
       if (m === months || principal > balance) principal = balance;
       payment = principal + interest;
     }
 
     balance = Math.max(balance - principal, 0);
 
-    // Дата начисления — фиксированное число (день base), m-й месяц
-    const accrualDate = addMonths(base, m - 1);
-    // Дата списания — ближайший рабочий день от даты начисления
-    const payDate = nextWorkDay(accrualDate);
+    const payDate = nextWorkDay(new Date(accrualDate));
 
     rows.push({
       index: m,
       date: payDate,
-      accrualDate,
+      accrualDate: new Date(accrualDate),
       payment,
       interest,
       principal,
       balance,
       interestOnly: isInterestOnly,
+      days,
     });
+
+    prevAccrualDate = new Date(accrualDate);
   }
   return rows;
 }
