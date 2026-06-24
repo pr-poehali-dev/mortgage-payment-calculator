@@ -51,12 +51,19 @@ function makeReportText(name: string, v: VariantState, r: ReturnType<typeof calc
   ].join('\n');
 }
 
-// Парсинг строки ДД.ММ.ГГГГ в Date
+// Умный парсинг даты: "1.2.22", "01.02.2022", "1,2,2022", "01/02/22" и т.д.
 function parseRuDate(s: string): Date | null {
-  const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  // Заменяем любые разделители на точку, убираем лишние пробелы
+  const norm = s.trim().replace(/[,\s/]+/g, '.').replace(/-+/g, '.');
+  const m = norm.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
   if (!m) return null;
-  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  let year = Number(m[3]);
+  // Двузначный год: 22 → 2022, 99 → 1999
+  if (year < 100) year += year < 30 ? 2000 : 1900;
+  const d = new Date(year, Number(m[2]) - 1, Number(m[1]));
   if (isNaN(d.getTime())) return null;
+  // Проверяем что день/месяц не съехали (например 32 января)
+  if (d.getDate() !== Number(m[1]) || d.getMonth() !== Number(m[2]) - 1) return null;
   return d;
 }
 
@@ -76,11 +83,14 @@ const Index = () => {
   const [years, setYears] = useState(20);
   const [months, setMonths] = useState(240);
 
+  // Льготный период (только %)
+  const [interestOnlyMonths, setInterestOnlyMonths] = useState(0);
+
   // Редактируемые даты
   const [startDate, setStartDate] = useState(() => {
     const d = new Date(); d.setHours(0, 0, 0, 0); return d;
   });
-  // Дата первого платежа — по умолчанию startDate + 1 мес → ближ. раб. день
+  // Дата ежемесячного списания — по умолчанию startDate + 1 мес → ближ. раб. день
   const [firstPaymentDate, setFirstPaymentDate] = useState(() => {
     const d = new Date(); d.setHours(0, 0, 0, 0);
     return nextWorkDay(addMonths(d, 1));
@@ -109,12 +119,13 @@ const Index = () => {
     price, down: result.down, loan: result.loan, rate,
     months: result.n, monthly: result.monthly, total: result.total,
     overpay: result.overpay, startDate, firstPaymentDate,
+    interestOnlyMonths,
   };
 
   const schedule = useMemo(
     () => (result.loan > 0 && result.n > 0 ? buildSchedule(mortgageInput) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [result.loan, result.n, result.monthly, rate, startDate, firstPaymentDate],
+    [result.loan, result.n, result.monthly, rate, startDate, firstPaymentDate, interestOnlyMonths],
   );
 
   const canExport = schedule.length > 0;
@@ -248,8 +259,6 @@ const Index = () => {
               onChange={setPrice}
               stepA={100000}
               labelA="100 тыс"
-              stepB={price * 0.01}
-              labelB="1%"
             />
             <div className="my-2.5 h-px bg-border" />
 
@@ -273,8 +282,6 @@ const Index = () => {
                   onChange={setDownAmount}
                   stepA={100000}
                   labelA="100 тыс"
-                  stepB={price * 0.01}
-                  labelB="1%"
                 />
               )}
               <Toggle
@@ -341,6 +348,19 @@ const Index = () => {
             </div>
             <div className="my-2.5 h-px bg-border" />
 
+            {/* Льготный период */}
+            <StepInput
+              label="Льготный пер."
+              suffix="мес."
+              value={interestOnlyMonths}
+              onChange={setInterestOnlyMonths}
+              max={result.n}
+              stepA={1}
+              labelA="1 мес"
+              hint="Первые N платежей — только проценты"
+            />
+            <div className="my-2.5 h-px bg-border" />
+
             {/* Редактируемые даты */}
             <div className="grid grid-cols-2 gap-2">
               <DateEdit
@@ -351,7 +371,8 @@ const Index = () => {
               />
               <DateEdit
                 icon="CalendarClock"
-                label="Первый платёж"
+                label="Дата списания"
+                hint="Число месяца ежемесячного списания"
                 value={firstPaymentDate}
                 onChange={setFirstPaymentDate}
               />
@@ -764,15 +785,15 @@ const fmtNum = (n: number) => {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: hasDecimals ? 2 : 0 }).format(n);
 };
 
-// Поле ввода с кнопками −/+ по бокам и необязательными дополнительными кнопками снизу
 const StepInput = ({
   value, onChange, label, suffix, max, decimal = false,
-  stepA, labelA, stepB, labelB,
+  stepA, labelA, stepB, labelB, hint,
 }: {
   value: number; onChange: (n: number) => void;
   label?: string; suffix?: string; max?: number; decimal?: boolean;
   stepA?: number; labelA?: string;
   stepB?: number; labelB?: string;
+  hint?: string;
 }) => {
   const [focused, setFocused] = useState(false);
   const [raw, setRaw] = useState('');
@@ -841,59 +862,152 @@ const StepInput = ({
           >+{labelB ?? stepB}</button>
         </div>
       )}
-
+      {hint && <p className="pl-9 font-mono text-[9px] text-muted-foreground/60">{hint}</p>}
     </div>
   );
 };
 
-// Редактируемая дата
+// Мини-календарь с вводом даты вручную
 const DateEdit = ({
-  icon, label, value, onChange,
+  icon, label, hint, value, onChange,
 }: {
-  icon: string; label: string; value: Date; onChange: (d: Date) => void;
+  icon: string; label: string; hint?: string; value: Date; onChange: (d: Date) => void;
 }) => {
-  const [editing, setEditing] = useState(false);
+  const [open, setOpen] = useState(false);
   const [raw, setRaw] = useState('');
+  const [calYear, setCalYear] = useState(value.getFullYear());
+  const [calMonth, setCalMonth] = useState(value.getMonth());
 
   const display = fmtDate(value);
 
   const commit = (s: string) => {
-    setEditing(false);
     const parsed = parseRuDate(s.trim());
-    if (parsed) onChange(parsed);
+    if (parsed) { onChange(parsed); setOpen(false); }
   };
 
-  if (editing) {
-    return (
-      <div className="rounded-xl border border-accent bg-secondary/30 px-2.5 py-2">
+  const MONTHS_RU = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+  const DAYS_RU = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+  // Дни календаря для calYear/calMonth
+  const calDays = useMemo(() => {
+    const firstDay = new Date(calYear, calMonth, 1);
+    const lastDay = new Date(calYear, calMonth + 1, 0);
+    // Понедельник = 0
+    let dow = firstDay.getDay() - 1; if (dow < 0) dow = 6;
+    const days: (number | null)[] = Array(dow).fill(null);
+    for (let d = 1; d <= lastDay.getDate(); d++) days.push(d);
+    while (days.length % 7 !== 0) days.push(null);
+    return days;
+  }, [calYear, calMonth]);
+
+  const selectDay = (day: number) => {
+    const d = new Date(calYear, calMonth, day);
+    onChange(d);
+    setOpen(false);
+  };
+
+  const prevMonth = () => { if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); };
+  const nextMonth = () => { if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); };
+
+  return (
+    <div className="relative">
+      {/* Триггер */}
+      <button
+        onClick={() => { setOpen(o => !o); setRaw(display); setCalYear(value.getFullYear()); setCalMonth(value.getMonth()); }}
+        className="rounded-xl border border-border bg-secondary/30 px-2.5 py-2 text-left w-full hover:border-accent transition-colors"
+      >
         <div className="mb-0.5 flex items-center gap-1 text-muted-foreground">
           <Icon name={icon} size={11} /><span className="text-[10px]">{label}</span>
         </div>
-        <input
-          autoFocus
-          type="text"
-          value={raw}
-          onChange={(e) => setRaw(e.target.value)}
-          onBlur={() => commit(raw)}
-          onKeyDown={(e) => { if (e.key === 'Enter') commit(raw); if (e.key === 'Escape') setEditing(false); }}
-          placeholder="ДД.ММ.ГГГГ"
-          className="w-full bg-transparent font-mono text-xs font-medium outline-none"
-        />
-      </div>
-    );
-  }
+        <div className="flex items-center gap-1">
+          <span className="font-mono text-xs font-medium">{display}</span>
+          <Icon name="CalendarDays" size={10} className="text-muted-foreground/40" />
+        </div>
+        {hint && <p className="mt-0.5 font-mono text-[9px] text-muted-foreground/50 leading-tight">{hint}</p>}
+      </button>
 
-  return (
-    <button
-      onClick={() => { setRaw(display); setEditing(true); }}
-      className="rounded-xl border border-border bg-secondary/30 px-2.5 py-2 text-left w-full hover:border-accent transition-colors"
-    >
-      <div className="mb-0.5 flex items-center gap-1 text-muted-foreground">
-        <Icon name={icon} size={11} /><span className="text-[10px]">{label}</span>
-      </div>
-      <span className="font-mono text-xs font-medium">{display}</span>
-      <span className="ml-1 font-mono text-[9px] text-muted-foreground/50">✎</span>
-    </button>
+      {/* Выпадающий календарь */}
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute z-50 top-full mt-1 left-0 w-64 rounded-2xl border border-border bg-card shadow-xl p-3 animate-fade-in">
+          {/* Ввод вручную */}
+          <div className="mb-2 flex items-center gap-1.5 rounded-lg border border-input bg-secondary/40 px-2 py-1 focus-within:border-accent">
+            <Icon name="Pencil" size={11} className="text-muted-foreground shrink-0" />
+            <input
+              autoFocus
+              type="text"
+              value={raw}
+              onChange={(e) => setRaw(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') commit(raw); if (e.key === 'Escape') setOpen(false); }}
+              placeholder="ДД.ММ.ГГГГ"
+              className="w-full bg-transparent font-mono text-xs outline-none"
+            />
+            <button onClick={() => commit(raw)} className="shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold bg-accent text-accent-foreground">ОК</button>
+          </div>
+
+          {/* Навигация месяц/год */}
+          <div className="mb-2 flex items-center justify-between">
+            <button onClick={prevMonth} className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-secondary transition-colors">
+              <Icon name="ChevronLeft" size={14} />
+            </button>
+            <div className="flex items-center gap-1">
+              <span className="font-mono text-xs font-semibold">{MONTHS_RU[calMonth]}</span>
+              {/* Год — скролл колёсиком или кликом */}
+              <div className="flex items-center gap-0.5">
+                <button onClick={() => setCalYear(y => y - 1)} className="text-muted-foreground hover:text-foreground">
+                  <Icon name="ChevronDown" size={11} />
+                </button>
+                <span className="font-mono text-xs font-semibold w-10 text-center">{calYear}</span>
+                <button onClick={() => setCalYear(y => y + 1)} className="text-muted-foreground hover:text-foreground">
+                  <Icon name="ChevronUp" size={11} />
+                </button>
+              </div>
+            </div>
+            <button onClick={nextMonth} className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-secondary transition-colors">
+              <Icon name="ChevronRight" size={14} />
+            </button>
+          </div>
+
+          {/* Дни недели */}
+          <div className="grid grid-cols-7 mb-1">
+            {DAYS_RU.map(d => (
+              <div key={d} className={`text-center font-mono text-[9px] font-semibold pb-0.5 ${d === 'Сб' || d === 'Вс' ? 'text-accent/70' : 'text-muted-foreground'}`}>{d}</div>
+            ))}
+          </div>
+
+          {/* Числа */}
+          <div className="grid grid-cols-7 gap-y-0.5">
+            {calDays.map((day, i) => {
+              if (day === null) return <div key={i} />;
+              const isSelected = day === value.getDate() && calMonth === value.getMonth() && calYear === value.getFullYear();
+              const dow = new Date(calYear, calMonth, day).getDay();
+              const isWeekend = dow === 0 || dow === 6;
+              return (
+                <button
+                  key={i}
+                  onClick={() => selectDay(day)}
+                  className={`flex h-7 w-full items-center justify-center rounded-lg font-mono text-xs transition-colors
+                    ${isSelected ? 'bg-accent text-accent-foreground font-bold' : isWeekend ? 'text-accent/60 hover:bg-accent/10' : 'hover:bg-secondary'}`}
+                >
+                  {day}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Кнопка Сегодня + Закрыть */}
+          <div className="mt-2 flex gap-1">
+            <button
+              onClick={() => { const t = new Date(); t.setHours(0,0,0,0); onChange(t); setOpen(false); }}
+              className="flex-1 rounded-lg border border-border bg-secondary/50 py-1 font-mono text-[10px] font-medium text-muted-foreground hover:border-accent/50 hover:text-accent transition-colors"
+            >Сегодня</button>
+            <button onClick={() => setOpen(false)} className="rounded-lg border border-border bg-secondary/50 px-2 py-1 font-mono text-[10px] text-muted-foreground hover:text-destructive transition-colors">✕</button>
+          </div>
+        </div>
+        </>
+      )}
+    </div>
   );
 };
 

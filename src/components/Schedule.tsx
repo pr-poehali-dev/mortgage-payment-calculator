@@ -28,37 +28,43 @@ const Schedule = ({ rows }: { rows: ScheduleRow[] }) => {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left font-mono text-xs uppercase tracking-wider text-muted-foreground">
-              <th className="px-6 py-3 font-medium">№</th>
-              <th className="px-3 py-3 font-medium">Дата</th>
-              <th className="px-3 py-3 text-right font-medium">Основной долг</th>
+              <th className="px-4 py-3 font-medium">№</th>
+              <th className="px-3 py-3 font-medium">Начисление</th>
+              <th className="px-3 py-3 font-medium">Списание</th>
+              <th className="px-3 py-3 text-right font-medium">Осн. долг</th>
               <th className="px-3 py-3 text-right font-medium">Проценты</th>
               <th className="px-3 py-3 text-right font-medium">Платёж</th>
-              <th className="px-6 py-3 text-right font-medium">Остаток</th>
+              <th className="px-4 py-3 text-right font-medium">Остаток</th>
             </tr>
           </thead>
           <tbody className="font-mono">
             {visible.map((r) => (
               <tr
                 key={r.index}
-                className="border-b border-border/50 transition-colors hover:bg-secondary/40"
+                className={`border-b border-border/50 transition-colors hover:bg-secondary/40 ${r.interestOnly ? 'bg-amber-50/40 dark:bg-amber-950/10' : ''}`}
               >
-                <td className="px-6 py-2.5 text-muted-foreground">{r.index}</td>
-                <td className="px-3 py-2.5">{fmtDate(r.date)}</td>
-                <td className="px-3 py-2.5 text-right">{fmt(r.principal)}</td>
-                <td className="px-3 py-2.5 text-right text-accent">{fmt(r.interest)}</td>
-                <td className="px-3 py-2.5 text-right font-medium">{fmt(r.payment)}</td>
-                <td className="px-6 py-2.5 text-right text-muted-foreground">{fmt(r.balance)}</td>
+                <td className="px-4 py-2 text-muted-foreground">
+                  <span>{r.index}</span>
+                  {r.interestOnly && (
+                    <span className="ml-1 font-mono text-[9px] text-amber-600 dark:text-amber-400 font-semibold">%</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-muted-foreground/70">{fmtDate(r.accrualDate)}</td>
+                <td className="px-3 py-2 font-medium">{fmtDate(r.date)}</td>
+                <td className="px-3 py-2 text-right">{r.principal > 0 ? fmt(r.principal) : '—'}</td>
+                <td className="px-3 py-2 text-right text-accent">{fmt(r.interest)}</td>
+                <td className="px-3 py-2 text-right font-semibold">{fmt(r.payment)}</td>
+                <td className="px-4 py-2 text-right text-muted-foreground">{fmt(r.balance)}</td>
               </tr>
             ))}
           </tbody>
-          {/* Итоговая строка — всегда видна */}
           <tfoot>
             <tr className="border-t-2 border-border bg-secondary/30 font-mono font-semibold text-sm">
-              <td className="px-6 py-2.5 text-muted-foreground" colSpan={2}>Итого</td>
+              <td className="px-4 py-2.5 text-muted-foreground" colSpan={3}>Итого</td>
               <td className="px-3 py-2.5 text-right">{fmt(totalPrincipal)}</td>
               <td className="px-3 py-2.5 text-right text-accent">{fmt(totalInterest)}</td>
               <td className="px-3 py-2.5 text-right">{fmt(totalPayment)}</td>
-              <td className="px-6 py-2.5 text-right text-muted-foreground">—</td>
+              <td className="px-4 py-2.5 text-right text-muted-foreground">—</td>
             </tr>
           </tfoot>
         </table>

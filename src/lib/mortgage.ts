@@ -8,16 +8,19 @@ export interface MortgageInput {
   total: number;
   overpay: number;
   startDate: Date;
-  firstPaymentDate?: Date; // если задана, даты платежей отсчитываются от неё
+  firstPaymentDate?: Date;   // дата ежемесячного списания (5-е число месяца и т.п.)
+  interestOnlyMonths?: number; // кол-во первых платежей только проценты
 }
 
 export interface ScheduleRow {
   index: number;
-  date: Date;
+  date: Date;        // фактическая дата списания (с учётом выходных/праздников)
+  accrualDate: Date; // дата начисления (фиксированное число месяца)
   payment: number;
   interest: number;
   principal: number;
   balance: number;
+  interestOnly: boolean;
 }
 
 export const fmt = (n: number) =>
@@ -36,25 +39,15 @@ export const addMonths = (d: Date, n: number) => {
 };
 
 // ── Праздники РФ ──────────────────────────────────────────────
-// Фиксированные праздники (ДД-ММ)
 const FIXED_HOLIDAYS = new Set([
-  '01-01', '02-01', '03-01', '04-01', '05-01', '06-01', '07-01', '08-01', // Новогодние + Рождество
-  '23-02', // День защитника
-  '08-03', // Женский день
-  '01-05', // Праздник труда
-  '09-05', // День победы
-  '12-06', // День России
-  '04-11', // День народного единства
+  '01-01', '02-01', '03-01', '04-01', '05-01', '06-01', '07-01', '08-01',
+  '23-02', '08-03', '01-05', '09-05', '12-06', '04-11',
 ]);
 
-// Переносы для конкретных годов (ГГГГ-ДД-ММ) — добавляем актуальные
 const TRANSFERS: Record<string, boolean> = {
-  // 2024
   '2024-29-12': true,
-  // 2025
   '2025-31-01': true,
-  '2025-10-01': false, // рабочая суббота -> убираем праздник если нужно
-  // 2026
+  '2025-10-01': false,
   '2026-09-01': true,
 };
 
@@ -64,16 +57,12 @@ function isHoliday(d: Date): boolean {
   const yyyy = String(d.getFullYear());
   const key = `${yyyy}-${dd}-${mm}`;
   const dayKey = `${dd}-${mm}`;
-  // Явный перенос
   if (key in TRANSFERS) return TRANSFERS[key];
-  // Выходные (сб, вс)
   const dow = d.getDay();
   if (dow === 0 || dow === 6) return true;
-  // Фиксированный праздник
   return FIXED_HOLIDAYS.has(dayKey);
 }
 
-// Сдвинуть дату на ближайший рабочий день вперёд
 export function nextWorkDay(d: Date): Date {
   const result = new Date(d);
   while (isHoliday(result)) {
@@ -83,38 +72,71 @@ export function nextWorkDay(d: Date): Date {
 }
 
 export function buildSchedule(input: MortgageInput): ScheduleRow[] {
-  const { loan, rate, months, monthly, startDate, firstPaymentDate } = input;
+  const { loan, rate, months, monthly, startDate, firstPaymentDate, interestOnlyMonths = 0 } = input;
   const i = rate / 100 / 12;
   let balance = loan;
   const rows: ScheduleRow[] = [];
 
-  // Базовая дата для отсчёта платежей: если задана firstPaymentDate,
-  // то используем её как первый платёж, последующие — через addMonths от неё.
-  // Иначе отсчитываем от startDate + m месяцев.
-  const base = firstPaymentDate ?? null;
+  // Базовая дата начисления: если задана firstPaymentDate — используем её день месяца.
+  // Проценты начисляются к фиксированному числу (день firstPaymentDate).
+  // Дата списания = nextWorkDay от даты начисления.
+  // Если firstPaymentDate не задана — отсчёт от startDate + m месяцев.
+  const base = firstPaymentDate ?? addMonths(startDate, 1);
+
+  // Пересчитываем аннуитет с учётом interestOnlyMonths:
+  // Первые interestOnlyMonths месяцев — только проценты, остаток не уменьшается.
+  // Затем оставшийся долг гасится за (months - interestOnlyMonths) месяцев по аннуитету.
+  const effectiveMonths = months - interestOnlyMonths;
+  const calcMonthly = (bal: number, n: number) => {
+    if (n <= 0 || bal <= 0) return 0;
+    const r = rate / 100 / 12;
+    if (r === 0) return bal / n;
+    return (bal * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+  };
+
+  // Аннуитетный платёж рассчитывается от исходной суммы на эффективный срок
+  const annuityPayment = interestOnlyMonths > 0
+    ? calcMonthly(loan, effectiveMonths)
+    : monthly;
 
   for (let m = 1; m <= months; m++) {
     const interest = balance * i;
-    let principal = monthly - interest;
-    if (m === months || principal > balance) principal = balance;
+    const isInterestOnly = m <= interestOnlyMonths;
+
+    let principal: number;
+    let payment: number;
+
+    if (isInterestOnly) {
+      // Только проценты — тело долга не гасится
+      principal = 0;
+      payment = interest;
+    } else {
+      // Аннуитет от оставшегося баланса
+      const remainingMonths = months - m + 1 - interestOnlyMonths;
+      const mp = remainingMonths <= 0
+        ? balance + interest
+        : annuityPayment;
+      principal = mp - interest;
+      if (m === months || principal > balance) principal = balance;
+      payment = principal + interest;
+    }
+
     balance = Math.max(balance - principal, 0);
 
-    let rawDate: Date;
-    if (base) {
-      // Первый платёж = firstPaymentDate, второй = firstPaymentDate + 1 мес, и т.д.
-      rawDate = addMonths(base, m - 1);
-    } else {
-      rawDate = addMonths(startDate, m);
-    }
-    const payDate = nextWorkDay(rawDate);
+    // Дата начисления — фиксированное число (день base), m-й месяц
+    const accrualDate = addMonths(base, m - 1);
+    // Дата списания — ближайший рабочий день от даты начисления
+    const payDate = nextWorkDay(accrualDate);
 
     rows.push({
       index: m,
       date: payDate,
-      payment: principal + interest,
+      accrualDate,
+      payment,
       interest,
       principal,
       balance,
+      interestOnly: isInterestOnly,
     });
   }
   return rows;

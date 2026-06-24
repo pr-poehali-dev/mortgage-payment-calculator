@@ -19,7 +19,8 @@ import { MortgageInput, ScheduleRow, fmt, fmt2, fmtDate } from './mortgage';
 // Заголовки столбцов графика в нужном порядке
 const HEADERS_RU = [
   '№ платежа',
-  'Дата платежа',
+  'Дата начисления',
+  'Дата списания',
   'Сумма основного долга',
   'Сумма начисленных процентов',
   'Общая сумма платежа',
@@ -49,9 +50,10 @@ const summaryRows = (input: MortgageInput): [string, string][] => [
   ['Долг + проценты (всего)', `${fmt(input.total)} ₽`],
 ];
 
-// Порядок: № | Дата | Основной долг | Проценты | Общий платёж | Остаток
+// Порядок: № | Дата начисления | Дата списания | Осн. долг | Проценты | Платёж | Остаток
 const toRow = (r: ScheduleRow) => [
   r.index,
+  fmtDate(r.accrualDate),
   fmtDate(r.date),
   Math.round(r.principal),
   Math.round(r.interest),
@@ -67,7 +69,7 @@ export function exportExcel(input: MortgageInput, schedule: ScheduleRow[], varia
   XLSX.utils.book_append_sheet(wb, ws1, 'Сводка');
 
   const ws2 = XLSX.utils.aoa_to_sheet([HEADERS_RU, ...schedule.map(toRow)]);
-  ws2['!cols'] = [{ wch: 10 }, { wch: 14 }, { wch: 24 }, { wch: 28 }, { wch: 22 }, { wch: 16 }];
+  ws2['!cols'] = [{ wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 22 }, { wch: 26 }, { wch: 20 }, { wch: 14 }];
   XLSX.utils.book_append_sheet(wb, ws2, 'График платежей');
 
   XLSX.writeFile(wb, makeFileName(variantName, 'xlsx'));
@@ -160,6 +162,7 @@ export async function exportWord(input: MortgageInput, schedule: ScheduleRow[], 
         new TableRow({
           children: [
             cell(String(r.index), false, AlignmentType.CENTER),
+            cell(fmtDate(r.accrualDate)),
             cell(fmtDate(r.date)),
             cell(fmt2(r.principal), false, AlignmentType.RIGHT),
             cell(fmt2(r.interest), false, AlignmentType.RIGHT),
