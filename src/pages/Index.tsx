@@ -8,48 +8,187 @@ import { exportExcel, exportPDF, exportWord } from '@/lib/export';
 type DownMode = 'percent' | 'amount';
 type TermMode = 'years' | 'months';
 
-const Index = () => {
-  const [price, setPrice] = useState(8000000);
-  const [downMode, setDownMode] = useState<DownMode>('percent');
-  const [downPercent, setDownPercent] = useState(20);
-  const [downAmount, setDownAmount] = useState(1600000);
-  const [rate, setRate] = useState(18);
-  const [termMode, setTermMode] = useState<TermMode>('years');
-  const [years, setYears] = useState(20);
-  const [months, setMonths] = useState(240);
+interface VariantState {
+  id: number;
+  name: string;
+  price: number;
+  downMode: DownMode;
+  downPercent: number;
+  downAmount: number;
+  rate: number;
+  termMode: TermMode;
+  years: number;
+  months: number;
+}
 
+let nextId = 1;
+const makeVariant = (overrides?: Partial<VariantState>): VariantState => ({
+  id: nextId++,
+  name: `Вариант ${nextId - 1}`,
+  price: 8000000,
+  downMode: 'percent',
+  downPercent: 20,
+  downAmount: 1600000,
+  rate: 18,
+  termMode: 'years',
+  years: 20,
+  months: 240,
+  ...overrides,
+});
+
+function calcResult(v: VariantState) {
+  const down = v.downMode === 'percent' ? (v.price * v.downPercent) / 100 : v.downAmount;
+  const loan = Math.max(v.price - down, 0);
+  const n = v.termMode === 'years' ? v.years * 12 : v.months;
+  const i = v.rate / 100 / 12;
+  let monthly = 0;
+  if (loan > 0 && n > 0) {
+    monthly = i === 0 ? loan / n : (loan * i * Math.pow(1 + i, n)) / (Math.pow(1 + i, n) - 1);
+  }
+  const total = monthly * n;
+  const overpay = total - loan;
+  return { down, loan, monthly, total, overpay, n, downRatio: v.price ? (down / v.price) * 100 : 0 };
+}
+
+const Index = () => {
+  const [compareMode, setCompareMode] = useState(false);
+  const [variants, setVariants] = useState<VariantState[]>([makeVariant({ name: 'Вариант 1' })]);
   const startDate = useMemo(() => new Date(), []);
 
-  const result = useMemo(() => {
-    const down = downMode === 'percent' ? (price * downPercent) / 100 : downAmount;
-    const loan = Math.max(price - down, 0);
-    const n = termMode === 'years' ? years * 12 : months;
-    const i = rate / 100 / 12;
+  const updateVariant = (id: number, patch: Partial<VariantState>) =>
+    setVariants((vs) => vs.map((v) => (v.id === id ? { ...v, ...patch } : v)));
 
-    let monthly = 0;
-    if (loan > 0 && n > 0) {
-      monthly = i === 0 ? loan / n : (loan * i * Math.pow(1 + i, n)) / (Math.pow(1 + i, n) - 1);
-    }
-    const total = monthly * n;
-    const overpay = total - loan;
-    return {
-      down,
-      loan,
-      monthly,
-      total,
-      overpay,
-      n,
-      downRatio: price ? (down / price) * 100 : 0,
-    };
-  }, [price, downMode, downPercent, downAmount, rate, termMode, years, months]);
+  const addVariant = () => {
+    if (variants.length >= 3) return;
+    const base = variants[variants.length - 1];
+    setVariants((vs) => [
+      ...vs,
+      makeVariant({
+        name: `Вариант ${vs.length + 1}`,
+        price: base.price,
+        downMode: base.downMode,
+        downPercent: base.downPercent,
+        downAmount: base.downAmount,
+        rate: base.rate,
+        termMode: base.termMode,
+        years: base.years,
+        months: base.months,
+      }),
+    ]);
+  };
 
+  const removeVariant = (id: number) => {
+    if (variants.length <= 1) return;
+    setVariants((vs) => vs.filter((v) => v.id !== id));
+  };
+
+  const enterCompare = () => {
+    if (variants.length === 1) addVariant();
+    setCompareMode(true);
+  };
+
+  const exitCompare = () => {
+    setCompareMode(false);
+    setVariants((vs) => [vs[0]]);
+  };
+
+  const results = variants.map((v) => calcResult(v));
+  const bestMonthly = Math.min(...results.map((r) => r.monthly).filter((m) => m > 0));
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      <div className={`mx-auto px-5 py-12 sm:py-20 ${compareMode ? 'max-w-7xl' : 'max-w-5xl'}`}>
+        <header className="mb-10 animate-fade-in">
+          <div className="mb-4 flex items-center gap-2 text-accent">
+            <Icon name="Home" size={18} />
+            <span className="font-mono text-xs uppercase tracking-[0.2em]">Ипотека</span>
+          </div>
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h1 className="text-4xl font-semibold leading-tight tracking-tight sm:text-6xl">
+                Ежемесячный платёж
+              </h1>
+              <p className="mt-3 max-w-md text-muted-foreground">
+                Аннуитетный расчёт по ипотеке за секунды. Меняйте параметры — результат обновляется сразу.
+              </p>
+            </div>
+            {!compareMode ? (
+              <button
+                onClick={enterCompare}
+                className="flex items-center gap-2 rounded-2xl border border-border bg-card px-5 py-3 text-sm font-medium transition-all hover:border-accent hover:bg-secondary/60"
+              >
+                <Icon name="Columns2" size={16} className="text-accent" />
+                Сравнить варианты
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                {variants.length < 3 && (
+                  <button
+                    onClick={addVariant}
+                    className="flex items-center gap-2 rounded-2xl border border-dashed border-border bg-card px-5 py-3 text-sm font-medium transition-all hover:border-accent hover:bg-secondary/60"
+                  >
+                    <Icon name="Plus" size={16} className="text-accent" />
+                    Добавить вариант
+                  </button>
+                )}
+                <button
+                  onClick={exitCompare}
+                  className="flex items-center gap-2 rounded-2xl border border-border bg-secondary/60 px-5 py-3 text-sm font-medium transition-all hover:border-destructive hover:text-destructive"
+                >
+                  <Icon name="X" size={16} />
+                  Выйти из сравнения
+                </button>
+              </div>
+            )}
+          </div>
+        </header>
+
+        <div className={`grid gap-6 ${compareMode ? `grid-cols-1 md:grid-cols-${variants.length}` : 'grid-cols-1'}`}>
+          {variants.map((v, idx) => (
+            <MortgageCard
+              key={v.id}
+              variant={v}
+              result={results[idx]}
+              startDate={startDate}
+              compareMode={compareMode}
+              isBest={compareMode && results[idx].monthly === bestMonthly && results[idx].monthly > 0}
+              canRemove={compareMode && variants.length > 2}
+              onRemove={() => removeVariant(v.id)}
+              onChange={(patch) => updateVariant(v.id, patch)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MortgageCard = ({
+  variant: v,
+  result,
+  startDate,
+  compareMode,
+  isBest,
+  canRemove,
+  onRemove,
+  onChange,
+}: {
+  variant: VariantState;
+  result: ReturnType<typeof calcResult>;
+  startDate: Date;
+  compareMode: boolean;
+  isBest: boolean;
+  canRemove: boolean;
+  onRemove: () => void;
+  onChange: (patch: Partial<VariantState>) => void;
+}) => {
   const firstPayment = addMonths(startDate, 1);
 
   const mortgageInput: MortgageInput = {
-    price,
+    price: v.price,
     down: result.down,
     loan: result.loan,
-    rate,
+    rate: v.rate,
     months: result.n,
     monthly: result.monthly,
     total: result.total,
@@ -60,49 +199,8 @@ const Index = () => {
   const schedule = useMemo(
     () => (result.loan > 0 && result.n > 0 ? buildSchedule(mortgageInput) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [result.loan, result.n, result.monthly, rate, startDate],
+    [result.loan, result.n, result.monthly, v.rate, startDate],
   );
-
-  const reportText = [
-    'Расчёт ипотеки',
-    `Стоимость недвижимости: ${fmt(price)} ₽`,
-    `Первоначальный взнос: ${fmt(result.down)} ₽ (${result.downRatio.toFixed(1)}%)`,
-    `Срок: ${Math.floor(result.n / 12)} лет (${result.n} мес.)`,
-    `Процентная ставка: ${rate}% годовых`,
-    `Ежемесячный платёж: ${fmt(result.monthly)} ₽`,
-  ].join('\n');
-
-  const copyReport = () => {
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(reportText).then(
-          () => toast.success('Отчёт скопирован'),
-          () => fallbackCopy(reportText),
-        );
-      } else {
-        fallbackCopy(reportText);
-      }
-    } catch {
-      fallbackCopy(reportText);
-    }
-  };
-
-  const fallbackCopy = (text: string) => {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    try {
-      document.execCommand('copy');
-      toast.success('Отчёт скопирован');
-    } catch {
-      toast.error('Не удалось скопировать');
-    }
-    document.body.removeChild(ta);
-  };
 
   const canExport = schedule.length > 0;
   const guard = (fn: () => void) => () => {
@@ -110,168 +208,176 @@ const Index = () => {
     fn();
   };
 
+  const reportText = [
+    `Расчёт ипотеки — ${v.name}`,
+    `Стоимость недвижимости: ${fmt(v.price)} ₽`,
+    `Первоначальный взнос: ${fmt(result.down)} ₽ (${result.downRatio.toFixed(1)}%)`,
+    `Срок: ${Math.floor(result.n / 12)} лет (${result.n} мес.)`,
+    `Процентная ставка: ${v.rate}% годовых`,
+    `Ежемесячный платёж: ${fmt(result.monthly)} ₽`,
+  ].join('\n');
+
+  const copyReport = () => {
+    const fallback = (text: string) => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try { document.execCommand('copy'); toast.success('Отчёт скопирован'); }
+      catch { toast.error('Не удалось скопировать'); }
+      document.body.removeChild(ta);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(reportText).then(() => toast.success('Отчёт скопирован'), () => fallback(reportText));
+    } else {
+      fallback(reportText);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto max-w-5xl px-5 py-12 sm:py-20">
-        <header className="mb-12 animate-fade-in">
-          <div className="mb-4 flex items-center gap-2 text-accent">
-            <Icon name="Home" size={18} />
-            <span className="font-mono text-xs uppercase tracking-[0.2em]">Ипотека</span>
+    <div className="flex flex-col gap-6">
+      {/* Header карточки в режиме сравнения */}
+      {compareMode && (
+        <div className={`flex items-center justify-between rounded-2xl px-5 py-3 ${isBest ? 'bg-accent/10 border border-accent/30' : 'bg-secondary/40 border border-border'}`}>
+          <div className="flex items-center gap-2">
+            {isBest && <Icon name="Trophy" size={15} className="text-accent" />}
+            <span className={`font-mono text-sm font-semibold ${isBest ? 'text-accent' : 'text-foreground'}`}>
+              {v.name}
+            </span>
+            {isBest && <span className="font-mono text-xs text-accent/70">· лучший платёж</span>}
           </div>
-          <h1 className="text-4xl font-semibold leading-tight tracking-tight sm:text-6xl">
-            Ежемесячный платёж
-          </h1>
-          <p className="mt-3 max-w-md text-muted-foreground">
-            Аннуитетный расчёт по ипотеке за секунды. Меняйте параметры — результат обновляется сразу.
+          {canRemove && (
+            <button onClick={onRemove} className="text-muted-foreground hover:text-destructive transition-colors">
+              <Icon name="X" size={15} />
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className={`grid gap-6 ${compareMode ? 'grid-cols-1' : 'lg:grid-cols-[1.1fr_0.9fr]'}`}>
+        {/* Form */}
+        <div className="rounded-3xl border border-border bg-card p-6 sm:p-8 animate-fade-in">
+          <NumInput label="Стоимость недвижимости" suffix="₽" value={v.price} onChange={(val) => onChange({ price: val })} />
+
+          <div className="my-7 h-px bg-border" />
+
+          <div className="flex items-stretch gap-2">
+            {v.downMode === 'percent' ? (
+              <NumInput label="Первоначальный взнос" value={v.downPercent} onChange={(val) => onChange({ downPercent: val })} suffix="%" max={100} />
+            ) : (
+              <NumInput label="Первоначальный взнос" value={v.downAmount} onChange={(val) => onChange({ downAmount: val })} suffix="₽" />
+            )}
+            <Toggle
+              options={[{ id: 'percent', label: '%' }, { id: 'amount', label: 'руб.' }]}
+              value={v.downMode}
+              vertical
+              onChange={(val) => {
+                const mode = val as DownMode;
+                if (mode === 'percent' && v.price > 0) {
+                  onChange({ downMode: mode, downPercent: Math.round((v.downAmount / v.price) * 10000) / 100 });
+                } else if (mode === 'amount' && v.price > 0) {
+                  onChange({ downMode: mode, downAmount: Math.round((v.price * v.downPercent) / 100) });
+                } else {
+                  onChange({ downMode: mode });
+                }
+              }}
+            />
+          </div>
+          <p className="mt-2 font-mono text-xs text-muted-foreground">
+            {v.downMode === 'percent'
+              ? `= ${fmt((v.price * v.downPercent) / 100)} ₽`
+              : `= ${result.downRatio.toFixed(2)} % от стоимости`}
           </p>
-        </header>
 
-        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          {/* Form */}
-          <div className="rounded-3xl border border-border bg-card p-6 sm:p-8 animate-fade-in">
-            <NumInput label="Стоимость недвижимости" suffix="₽" value={price} onChange={setPrice} />
+          <div className="my-7 h-px bg-border" />
 
-            <div className="my-7 h-px bg-border" />
+          <NumInput label="Процентная ставка" suffix="% годовых" value={v.rate} onChange={(val) => onChange({ rate: val })} step={0.1} />
 
-            <div className="flex items-stretch gap-2">
-              {downMode === 'percent' ? (
-                <NumInput label="Первоначальный взнос" value={downPercent} onChange={setDownPercent} suffix="%" max={100} />
-              ) : (
-                <NumInput label="Первоначальный взнос" value={downAmount} onChange={setDownAmount} suffix="₽" />
-              )}
-              <Toggle
-                options={[
-                  { id: 'percent', label: '%' },
-                  { id: 'amount', label: 'руб.' },
-                ]}
-                value={downMode}
-                vertical
-                onChange={(v) => {
-                  const mode = v as DownMode;
-                  if (mode === 'percent' && price > 0) {
-                    const pct = Math.round((downAmount / price) * 10000) / 100;
-                    setDownPercent(pct);
-                  } else if (mode === 'amount' && price > 0) {
-                    setDownAmount(Math.round((price * downPercent) / 100));
-                  }
-                  setDownMode(mode);
-                }}
-              />
-            </div>
-            <p className="mt-2 font-mono text-xs text-muted-foreground">
-              {downMode === 'percent'
-                ? `= ${fmt((price * downPercent) / 100)} ₽`
-                : `= ${result.downRatio.toFixed(2)} % от стоимости`}
-            </p>
+          <div className="my-7 h-px bg-border" />
 
-            <div className="my-7 h-px bg-border" />
-
-            <NumInput label="Процентная ставка" suffix="% годовых" value={rate} onChange={setRate} step={0.1} />
-
-            <div className="my-7 h-px bg-border" />
-
-            <div className="flex items-stretch gap-2">
-              {termMode === 'years' ? (
-                <NumInput label="Срок кредита" value={years} onChange={setYears} suffix="лет" max={50} />
-              ) : (
-                <NumInput label="Срок кредита" value={months} onChange={setMonths} suffix="мес." max={600} />
-              )}
-              <Toggle
-                options={[
-                  { id: 'years', label: 'лет' },
-                  { id: 'months', label: 'мес.' },
-                ]}
-                value={termMode}
-                vertical
-                onChange={(v) => {
-                  const mode = v as TermMode;
-                  if (mode === 'months') {
-                    setMonths(Math.round(years * 12));
-                  } else {
-                    setYears(Math.round((months / 12) * 100) / 100);
-                  }
-                  setTermMode(mode);
-                }}
-              />
-            </div>
-
-            <div className="mt-7 grid grid-cols-2 gap-3">
-              <DateCard icon="FileSignature" label="Дата оформления" value={fmtDate(startDate)} />
-              <DateCard icon="CalendarClock" label="Первый платёж" value={fmtDate(firstPayment)} />
-            </div>
+          <div className="flex items-stretch gap-2">
+            {v.termMode === 'years' ? (
+              <NumInput label="Срок кредита" value={v.years} onChange={(val) => onChange({ years: val })} suffix="лет" max={50} />
+            ) : (
+              <NumInput label="Срок кредита" value={v.months} onChange={(val) => onChange({ months: val })} suffix="мес." max={600} />
+            )}
+            <Toggle
+              options={[{ id: 'years', label: 'лет' }, { id: 'months', label: 'мес.' }]}
+              value={v.termMode}
+              vertical
+              onChange={(val) => {
+                const mode = val as TermMode;
+                if (mode === 'months') {
+                  onChange({ termMode: mode, months: Math.round(v.years * 12) });
+                } else {
+                  onChange({ termMode: mode, years: Math.round((v.months / 12) * 100) / 100 });
+                }
+              }}
+            />
           </div>
 
-          {/* Result */}
-          <div className="flex flex-col gap-4">
-            <div className="rounded-3xl bg-primary p-8 text-primary-foreground animate-fade-in">
-              <span className="font-mono text-xs uppercase tracking-[0.2em] opacity-60">
-                Платёж в месяц
-              </span>
-              <div className="mt-3 font-mono text-4xl font-semibold sm:text-5xl">
-                {fmt(result.monthly)}
-                <span className="ml-2 text-xl opacity-50">₽</span>
-              </div>
-            </div>
-
-            <div className="grid gap-4 rounded-3xl border border-border bg-card p-6 animate-fade-in">
-              <Stat icon="Banknote" label="Сумма кредита" value={`${fmt(result.loan)} ₽`} />
-              <div className="h-px bg-border" />
-              <Stat icon="Wallet" label="Первый взнос" value={`${fmt(result.down)} ₽`} />
-              <div className="h-px bg-border" />
-              <Stat
-                icon="Percent"
-                label="Начисленные проценты"
-                value={`${fmt(result.overpay)} ₽`}
-                accent
-              />
-              <div className="h-px bg-border" />
-              <Stat
-                icon="TrendingUp"
-                label="Общая переплата"
-                value={`${fmt(result.overpay)} ₽`}
-                accent
-              />
-              <div className="h-px bg-border" />
-              <Stat icon="Coins" label="Долг + проценты" value={`${fmt(result.total)} ₽`} />
-            </div>
-
-            <div className="rounded-2xl border border-border bg-card overflow-hidden">
-              <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider font-mono">Краткий отчёт</span>
-                <button
-                  onClick={copyReport}
-                  className="flex items-center gap-1.5 rounded-lg bg-secondary px-3 py-1.5 text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
-                >
-                  <Icon name="Copy" size={13} />
-                  Скопировать
-                </button>
-              </div>
-              <pre className="px-4 py-3 font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap select-all">
-                {reportText}
-              </pre>
-            </div>
+          <div className="mt-7 grid grid-cols-2 gap-3">
+            <DateCard icon="FileSignature" label="Дата оформления" value={fmtDate(startDate)} />
+            <DateCard icon="CalendarClock" label="Первый платёж" value={fmtDate(firstPayment)} />
           </div>
         </div>
 
-        {/* Export */}
-        <div className="mt-6 flex flex-wrap gap-3">
-          <ExportBtn icon="Sheet" label="Excel" onClick={guard(() => exportExcel(mortgageInput, schedule))} />
-          <ExportBtn icon="FileText" label="PDF" onClick={guard(() => exportPDF(mortgageInput, schedule))} />
-          <ExportBtn
-            icon="FileType"
-            label="Word"
-            onClick={guard(() => {
-              exportWord(mortgageInput, schedule);
-            })}
-          />
-        </div>
-
-        {/* Schedule */}
-        {canExport && (
-          <div className="mt-6">
-            <Schedule rows={schedule} />
+        {/* Result */}
+        <div className="flex flex-col gap-4">
+          <div className={`rounded-3xl p-8 text-primary-foreground animate-fade-in ${isBest ? 'bg-accent' : 'bg-primary'}`}>
+            <span className="font-mono text-xs uppercase tracking-[0.2em] opacity-60">
+              Платёж в месяц
+            </span>
+            <div className="mt-3 font-mono text-4xl font-semibold sm:text-5xl">
+              {fmt(result.monthly)}
+              <span className="ml-2 text-xl opacity-50">₽</span>
+            </div>
           </div>
-        )}
+
+          <div className="grid gap-4 rounded-3xl border border-border bg-card p-6 animate-fade-in">
+            <Stat icon="Banknote" label="Сумма кредита" value={`${fmt(result.loan)} ₽`} />
+            <div className="h-px bg-border" />
+            <Stat icon="Wallet" label="Первый взнос" value={`${fmt(result.down)} ₽`} />
+            <div className="h-px bg-border" />
+            <Stat icon="Percent" label="Начисленные проценты" value={`${fmt(result.overpay)} ₽`} accent />
+            <div className="h-px bg-border" />
+            <Stat icon="Receipt" label="Общая сумма выплат" value={`${fmt(result.total)} ₽`} />
+          </div>
+
+          <div className="rounded-3xl border border-border bg-card overflow-hidden animate-fade-in">
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider font-mono">Краткий отчёт</span>
+              <button
+                onClick={copyReport}
+                className="flex items-center gap-1.5 rounded-lg bg-secondary px-3 py-1.5 text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+              >
+                <Icon name="Copy" size={13} />
+                Скопировать
+              </button>
+            </div>
+            <pre className="px-4 py-3 font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap select-all">
+              {reportText}
+            </pre>
+          </div>
+
+          {!compareMode && (
+            <>
+              <div className="flex flex-wrap gap-3">
+                <ExportBtn icon="Sheet" label="Excel" onClick={guard(() => exportExcel(mortgageInput, schedule))} />
+                <ExportBtn icon="FileText" label="PDF" onClick={guard(() => exportPDF(mortgageInput, schedule))} />
+                <ExportBtn icon="FileType" label="Word" onClick={guard(() => exportWord(mortgageInput, schedule))} />
+              </div>
+              {canExport && (
+                <div className="mt-2">
+                  <Schedule rows={schedule} />
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -328,7 +434,7 @@ const NumInput = ({
   const displayValue = focused ? raw : fmtInput(value);
 
   return (
-    <div className="relative rounded-xl border border-input bg-secondary/40 transition-colors focus-within:border-accent">
+    <div className="relative w-full rounded-xl border border-input bg-secondary/40 transition-colors focus-within:border-accent">
       {label && (
         <label
           className={`pointer-events-none absolute left-4 transition-all duration-200 font-mono ${
@@ -455,5 +561,8 @@ const ExportBtn = ({
     Скачать в {label}
   </button>
 );
+
+ 
+const _Field = Field;
 
 export default Index;
