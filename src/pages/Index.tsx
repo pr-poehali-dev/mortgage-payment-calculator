@@ -21,20 +21,13 @@ interface VariantState {
   months: number;
 }
 
-let nextId = 1;
-const makeVariant = (overrides?: Partial<VariantState>): VariantState => ({
-  id: nextId++,
-  name: `Вариант ${nextId - 1}`,
-  price: 8000000,
-  downMode: 'percent',
-  downPercent: 20,
-  downAmount: 1600000,
-  rate: 18,
-  termMode: 'years',
-  years: 20,
-  months: 240,
-  ...overrides,
-});
+// Глобальный счётчик id
+let _nextId = 2;
+const genId = () => _nextId++;
+
+// Глобальный счётчик для уникальных номеров вариантов
+let _variantSeq = 2;
+const nextVariantNum = () => _variantSeq++;
 
 function calcResult(v: VariantState) {
   const down = v.downMode === 'percent' ? (v.price * v.downPercent) / 100 : v.downAmount;
@@ -50,11 +43,22 @@ function calcResult(v: VariantState) {
   return { down, loan, monthly, total, overpay, n, downRatio: v.price ? (down / v.price) * 100 : 0 };
 }
 
+function makeReportText(name: string, v: VariantState, r: ReturnType<typeof calcResult>) {
+  return [
+    `Расчёт ипотеки — ${name}`,
+    `Стоимость недвижимости: ${fmt(v.price)} ₽`,
+    `Первоначальный взнос: ${fmt(r.down)} ₽ (${r.downRatio.toFixed(1)}%)`,
+    `Срок: ${Math.floor(r.n / 12)} лет (${r.n} мес.)`,
+    `Процентная ставка: ${v.rate}% годовых`,
+    `Ежемесячный платёж: ${fmt(r.monthly)} ₽`,
+  ].join('\n');
+}
+
 const Index = () => {
   const [compareMode, setCompareMode] = useState(false);
-  const [variants, setVariants] = useState<VariantState[]>([makeVariant({ name: 'Вариант 1' })]);
+  const [variants, setVariants] = useState<VariantState[]>([]);
 
-  // Основная форма (первый вариант)
+  // Основная форма
   const [price, setPrice] = useState(8000000);
   const [downMode, setDownMode] = useState<DownMode>('percent');
   const [downPercent, setDownPercent] = useState(20);
@@ -63,6 +67,11 @@ const Index = () => {
   const [termMode, setTermMode] = useState<TermMode>('years');
   const [years, setYears] = useState(20);
   const [months, setMonths] = useState(240);
+
+  // Краткий отчёт — выбранный вариант (null = основной)
+  const [reportVariantId, setReportVariantId] = useState<number | 'all' | null>(null);
+  // График — выбранный вариант (null = основной)
+  const [scheduleVariantId, setScheduleVariantId] = useState<number | null>(null);
 
   const startDate = useMemo(() => new Date(), []);
   const firstPayment = addMonths(startDate, 1);
@@ -99,14 +108,80 @@ const Index = () => {
     fn();
   };
 
-  const reportText = [
-    'Расчёт ипотеки',
-    `Стоимость недвижимости: ${fmt(price)} ₽`,
-    `Первоначальный взнос: ${fmt(result.down)} ₽ (${result.downRatio.toFixed(1)}%)`,
-    `Срок: ${Math.floor(result.n / 12)} лет (${result.n} мес.)`,
-    `Процентная ставка: ${rate}% годовых`,
-    `Ежемесячный платёж: ${fmt(result.monthly)} ₽`,
-  ].join('\n');
+  // Основной вариант как VariantState
+  const mainVariant: VariantState = useMemo(() => ({
+    id: 0, name: 'Основной',
+    price, downMode, downPercent, downAmount, rate, termMode, years, months,
+  }), [price, downMode, downPercent, downAmount, rate, termMode, years, months]);
+
+  // Все варианты для сравнения (основной + добавленные)
+  const allVariants = useMemo(() => [mainVariant, ...variants], [mainVariant, variants]);
+  const allResults = useMemo(() => allVariants.map(calcResult), [allVariants]);
+  const bestMonthly = useMemo(
+    () => Math.min(...allResults.map((r) => r.monthly).filter((m) => m > 0)),
+    [allResults],
+  );
+
+  const updateVariant = (id: number, patch: Partial<VariantState>) =>
+    setVariants((vs) => vs.map((v) => (v.id === id ? { ...v, ...patch } : v)));
+
+  const addVariant = () => {
+    if (variants.length >= 9) return; // основной + 9 = 10 итого
+    const num = nextVariantNum();
+    setVariants((vs) => [
+      ...vs,
+      {
+        id: genId(),
+        name: `Вариант ${num}`,
+        price, downMode, downPercent, downAmount, rate, termMode, years, months,
+      },
+    ]);
+  };
+
+  const removeVariant = (id: number) => {
+    setVariants((vs) => vs.filter((v) => v.id !== id));
+    if (reportVariantId === id) setReportVariantId(null);
+    if (scheduleVariantId === id) setScheduleVariantId(null);
+  };
+
+  const enterCompare = () => {
+    const num = nextVariantNum();
+    setVariants([{
+      id: genId(),
+      name: `Вариант ${num}`,
+      price, downMode, downPercent, downAmount, rate, termMode, years, months,
+    }]);
+    setCompareMode(true);
+  };
+
+  const exitCompare = () => {
+    setCompareMode(false);
+    setVariants([]);
+    setReportVariantId(null);
+    setScheduleVariantId(null);
+    _variantSeq = 2;
+  };
+
+  // Краткий отчёт
+  const reportOptions = compareMode
+    ? [
+        { id: null as null | number | 'all', label: 'Основной' },
+        ...variants.map((v) => ({ id: v.id as null | number | 'all', label: v.name })),
+        { id: 'all' as null | number | 'all', label: 'Все варианты' },
+      ]
+    : [];
+
+  const reportText = useMemo(() => {
+    if (!compareMode || reportVariantId === null) {
+      return makeReportText('Основной', mainVariant, result);
+    }
+    if (reportVariantId === 'all') {
+      return allVariants.map((v, i) => makeReportText(v.name, v, allResults[i])).join('\n\n---\n\n');
+    }
+    const v = variants.find((x) => x.id === reportVariantId);
+    if (!v) return makeReportText('Основной', mainVariant, result);
+    return makeReportText(v.name, v, calcResult(v));
+  }, [compareMode, reportVariantId, mainVariant, result, allVariants, allResults, variants]);
 
   const copyReport = () => {
     const fallback = (text: string) => {
@@ -122,42 +197,16 @@ const Index = () => {
     } else { fallback(reportText); }
   };
 
-  // Сравнение — синхронизируем первый вариант с основной формой
-  const mainAsVariant: VariantState = useMemo(() => ({
-    id: 0, name: 'Текущий',
-    price, downMode, downPercent, downAmount, rate, termMode, years, months,
-  }), [price, downMode, downPercent, downAmount, rate, termMode, years, months]);
-
-  const compareVariants = [mainAsVariant, ...variants];
-  const compareResults = compareVariants.map((v) => calcResult(v));
-  const bestMonthly = Math.min(...compareResults.map((r) => r.monthly).filter((m) => m > 0));
-
-  const updateVariant = (id: number, patch: Partial<VariantState>) =>
-    setVariants((vs) => vs.map((v) => (v.id === id ? { ...v, ...patch } : v)));
-
-  const addVariant = () => {
-    if (variants.length >= 2) return;
-    setVariants((vs) => [
-      ...vs,
-      makeVariant({
-        name: `Вариант ${vs.length + 1}`,
-        price, downMode, downPercent, downAmount, rate, termMode, years, months,
-      }),
-    ]);
-  };
-
-  const removeVariant = (id: number) =>
-    setVariants((vs) => vs.filter((v) => v.id !== id));
-
-  const enterCompare = () => {
-    setVariants([makeVariant({ name: 'Вариант 2', price, downMode, downPercent, downAmount, rate, termMode, years, months })]);
-    setCompareMode(true);
-  };
-
-  const exitCompare = () => {
-    setCompareMode(false);
-    setVariants([]);
-  };
+  // График — выбранный вариант
+  const scheduleVariant = scheduleVariantId == null
+    ? { v: mainVariant, r: result, inp: mortgageInput, sch: schedule, name: 'Основной' }
+    : (() => {
+        const v = variants.find((x) => x.id === scheduleVariantId) ?? mainVariant;
+        const r = calcResult(v);
+        const inp: MortgageInput = { price: v.price, down: r.down, loan: r.loan, rate: v.rate, months: r.n, monthly: r.monthly, total: r.total, overpay: r.overpay, startDate };
+        const sch = r.loan > 0 && r.n > 0 ? buildSchedule(inp) : [];
+        return { v, r, inp, sch, name: v.name };
+      })();
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -243,9 +292,31 @@ const Index = () => {
               <div className="h-px bg-border" />
               <Stat icon="Receipt" label="Общая сумма выплат" value={`${fmt(result.total)} ₽`} />
             </div>
+
+            {/* Краткий отчёт */}
             <div className="rounded-3xl border border-border bg-card overflow-hidden animate-fade-in">
-              <div className="flex items-center justify-between border-b border-border px-4 py-3">
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider font-mono">Краткий отчёт</span>
+              <div className="flex items-center justify-between border-b border-border px-4 py-3 gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider font-mono">Краткий отчёт</span>
+                  {compareMode && (
+                    <select
+                      value={reportVariantId === null ? '__main__' : reportVariantId === 'all' ? '__all__' : String(reportVariantId)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '__main__') setReportVariantId(null);
+                        else if (val === '__all__') setReportVariantId('all');
+                        else setReportVariantId(Number(val));
+                      }}
+                      className="rounded-lg border border-border bg-secondary px-2 py-1 font-mono text-xs outline-none cursor-pointer"
+                    >
+                      <option value="__main__">Основной</option>
+                      {variants.map((v) => (
+                        <option key={v.id} value={String(v.id)}>{v.name}</option>
+                      ))}
+                      <option value="__all__">Все варианты</option>
+                    </select>
+                  )}
+                </div>
                 <button onClick={copyReport} className="flex items-center gap-1.5 rounded-lg bg-secondary px-3 py-1.5 text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground">
                   <Icon name="Copy" size={13} />Скопировать
                 </button>
@@ -260,15 +331,18 @@ const Index = () => {
           <ExportBtn icon="Sheet" label="Excel" onClick={guard(() => exportExcel(mortgageInput, schedule))} />
           <ExportBtn icon="FileText" label="PDF" onClick={guard(() => exportPDF(mortgageInput, schedule))} />
           <ExportBtn icon="FileType" label="Word" onClick={guard(() => exportWord(mortgageInput, schedule))} />
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
             {!compareMode ? (
-              <button onClick={enterCompare} className="flex items-center gap-2 rounded-2xl border border-border bg-card px-5 py-4 text-sm font-medium transition-all hover:border-accent hover:bg-secondary/60">
-                <Icon name="Columns2" size={16} className="text-accent" />
+              <button
+                onClick={enterCompare}
+                className="flex items-center gap-2 rounded-2xl bg-accent px-5 py-4 text-sm font-semibold text-accent-foreground shadow-md transition-all hover:opacity-90 active:scale-95"
+              >
+                <Icon name="Columns2" size={16} />
                 Сравнить варианты
               </button>
             ) : (
-              <div className="flex items-center gap-2">
-                {variants.length < 2 && (
+              <>
+                {variants.length < 9 && (
                   <button onClick={addVariant} className="flex items-center gap-2 rounded-2xl border border-dashed border-accent/50 bg-card px-5 py-4 text-sm font-medium text-accent transition-all hover:bg-accent/10">
                     <Icon name="Plus" size={16} />Добавить вариант
                   </button>
@@ -276,7 +350,7 @@ const Index = () => {
                 <button onClick={exitCompare} className="flex items-center gap-2 rounded-2xl border border-border bg-secondary/60 px-5 py-4 text-sm font-medium transition-all hover:border-destructive hover:text-destructive">
                   <Icon name="X" size={16} />Закрыть сравнение
                 </button>
-              </div>
+              </>
             )}
           </div>
         </div>
@@ -285,8 +359,8 @@ const Index = () => {
         {compareMode && (
           <div className="mt-6 animate-fade-in">
             <CompareTable
-              variants={compareVariants}
-              results={compareResults}
+              variants={allVariants}
+              results={allResults}
               bestMonthly={bestMonthly}
               onUpdate={updateVariant}
               onRemove={removeVariant}
@@ -295,9 +369,27 @@ const Index = () => {
         )}
 
         {/* График платежей */}
-        {canExport && (
+        {(canExport || scheduleVariant.sch.length > 0) && (
           <div className="mt-6">
-            <Schedule rows={schedule} />
+            {compareMode && (
+              <div className="mb-3 flex items-center gap-3">
+                <span className="font-mono text-xs text-muted-foreground uppercase tracking-wider">График погашения:</span>
+                <select
+                  value={scheduleVariantId === null ? '__main__' : String(scheduleVariantId)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setScheduleVariantId(val === '__main__' ? null : Number(val));
+                  }}
+                  className="rounded-xl border border-border bg-card px-3 py-1.5 font-mono text-sm font-medium outline-none cursor-pointer"
+                >
+                  <option value="__main__">Основной</option>
+                  {variants.map((v) => (
+                    <option key={v.id} value={String(v.id)}>{v.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <Schedule rows={scheduleVariant.sch.length > 0 ? scheduleVariant.sch : schedule} />
           </div>
         )}
       </div>
@@ -306,17 +398,6 @@ const Index = () => {
 };
 
 /* ── Таблица сравнения ─────────────────────────────────────── */
-
-const COMPARE_ROWS: { label: string; key: string; format: (r: ReturnType<typeof calcResult>, v: VariantState) => string }[] = [
-  { label: 'Ставка', key: 'rate', format: (_, v) => `${v.rate}%` },
-  { label: 'Стоимость', key: 'price', format: (_, v) => `${fmt(v.price)} ₽` },
-  { label: 'Первый взнос', key: 'down', format: (r) => `${fmt(r.down)} ₽` },
-  { label: 'Срок', key: 'n', format: (r) => `${Math.floor(r.n / 12)} л. ${r.n % 12 ? `${r.n % 12} м.` : ''}`.trim() },
-  { label: 'Сумма кредита', key: 'loan', format: (r) => `${fmt(r.loan)} ₽` },
-  { label: 'Платёж/мес.', key: 'monthly', format: (r) => `${fmt(r.monthly)} ₽` },
-  { label: 'Переплата', key: 'overpay', format: (r) => `${fmt(r.overpay)} ₽` },
-  { label: 'Итого выплат', key: 'total', format: (r) => `${fmt(r.total)} ₽` },
-];
 
 const CompareTable = ({
   variants,
@@ -331,6 +412,33 @@ const CompareTable = ({
   onUpdate: (id: number, patch: Partial<VariantState>) => void;
   onRemove: (id: number) => void;
 }) => {
+  const ROWS: { label: string; key: string }[] = [
+    { label: 'Ставка', key: 'rate' },
+    { label: 'Стоимость', key: 'price' },
+    { label: 'Первый взнос', key: 'down' },
+    { label: 'Срок', key: 'n' },
+    { label: 'Сумма кредита', key: 'loan' },
+    { label: 'Платёж/мес.', key: 'monthly' },
+    { label: 'Переплата', key: 'overpay' },
+    { label: 'Итого выплат', key: 'total' },
+  ];
+
+  const fmtCell = (key: string, r: ReturnType<typeof calcResult>, v: VariantState) => {
+    switch (key) {
+      case 'rate': return `${v.rate}%`;
+      case 'price': return `${fmt(v.price)} ₽`;
+      case 'down': return `${fmt(r.down)} ₽`;
+      case 'n': return `${Math.floor(r.n / 12)} л.${r.n % 12 ? ` ${r.n % 12} м.` : ''}`;
+      case 'loan': return `${fmt(r.loan)} ₽`;
+      case 'monthly': return `${fmt(r.monthly)} ₽`;
+      case 'overpay': return `${fmt(r.overpay)} ₽`;
+      case 'total': return `${fmt(r.total)} ₽`;
+      default: return '—';
+    }
+  };
+
+  const editableKeys = ['rate', 'price', 'down', 'n'];
+
   return (
     <div className="rounded-3xl border border-border bg-card overflow-hidden">
       <div className="border-b border-border px-6 py-4">
@@ -340,22 +448,19 @@ const CompareTable = ({
         <table className="w-full">
           <thead>
             <tr className="border-b border-border">
-              <th className="px-6 py-4 text-left text-xs font-medium text-muted-foreground w-36" />
+              <th className="px-6 py-4 text-left text-xs font-medium text-muted-foreground w-36 shrink-0" />
               {variants.map((v, idx) => {
                 const isBest = results[idx].monthly === bestMonthly && results[idx].monthly > 0;
                 const isMain = v.id === 0;
                 return (
-                  <th key={v.id} className="px-4 py-4 text-left min-w-[180px]">
+                  <th key={v.id} className="px-4 py-4 text-left min-w-[160px]">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
                         {isBest && <Icon name="Trophy" size={13} className="text-accent shrink-0" />}
                         {isMain ? (
-                          <span className="font-mono text-sm font-semibold text-foreground">Текущий</span>
+                          <span className="font-mono text-sm font-semibold text-foreground">Основной</span>
                         ) : (
-                          <VariantNameInput
-                            value={v.name}
-                            onChange={(name) => onUpdate(v.id, { name })}
-                          />
+                          <VariantNameInput value={v.name} onChange={(name) => onUpdate(v.id, { name })} />
                         )}
                       </div>
                       {!isMain && (
@@ -364,29 +469,27 @@ const CompareTable = ({
                         </button>
                       )}
                     </div>
-                    {isBest && (
-                      <span className="mt-1 block font-mono text-[10px] text-accent/70">лучший платёж</span>
-                    )}
+                    {isBest && <span className="mt-0.5 block font-mono text-[10px] text-accent/70">лучший платёж</span>}
                   </th>
                 );
               })}
             </tr>
           </thead>
           <tbody>
-            {COMPARE_ROWS.map((row, rowIdx) => (
+            {ROWS.map((row, rowIdx) => (
               <tr key={row.key} className={rowIdx % 2 === 0 ? 'bg-secondary/20' : ''}>
-                <td className="px-6 py-3.5 text-xs text-muted-foreground font-medium whitespace-nowrap">{row.label}</td>
+                <td className="px-6 py-3 text-xs text-muted-foreground font-medium whitespace-nowrap">{row.label}</td>
                 {variants.map((v, idx) => {
                   const isBest = results[idx].monthly === bestMonthly && results[idx].monthly > 0;
-                  const isMonthlyRow = row.key === 'monthly';
                   const isMain = v.id === 0;
+                  const canEdit = !isMain && editableKeys.includes(row.key);
                   return (
-                    <td key={v.id} className="px-4 py-3.5">
-                      {!isMain && (row.key === 'rate' || row.key === 'n') ? (
-                        <CompareInlineInput variant={v} field={row.key} onUpdate={onUpdate} />
+                    <td key={v.id} className="px-4 py-3">
+                      {canEdit ? (
+                        <CompareCell variant={v} field={row.key} result={results[idx]} onUpdate={onUpdate} />
                       ) : (
-                        <span className={`font-mono text-sm font-semibold ${isMonthlyRow && isBest ? 'text-accent' : ''}`}>
-                          {row.format(results[idx], v)}
+                        <span className={`font-mono text-sm font-semibold ${row.key === 'monthly' && isBest ? 'text-accent' : ''}`}>
+                          {fmtCell(row.key, results[idx], v)}
                         </span>
                       )}
                     </td>
@@ -401,65 +504,107 @@ const CompareTable = ({
   );
 };
 
-const VariantNameInput = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => {
-  const [editing, setEditing] = useState(false);
-  const [raw, setRaw] = useState(value);
-  if (editing) {
-    return (
-      <input
-        autoFocus
-        value={raw}
-        onChange={(e) => setRaw(e.target.value)}
-        onBlur={() => { onChange(raw || value); setEditing(false); }}
-        onKeyDown={(e) => { if (e.key === 'Enter') { onChange(raw || value); setEditing(false); } }}
-        className="w-28 bg-transparent font-mono text-sm font-semibold outline-none border-b border-accent"
-      />
-    );
-  }
-  return (
-    <button onClick={() => { setRaw(value); setEditing(true); }} className="font-mono text-sm font-semibold text-foreground hover:text-accent transition-colors text-left">
-      {value}
-    </button>
-  );
-};
-
-const CompareInlineInput = ({
+/* Редактируемая ячейка таблицы сравнения */
+const CompareCell = ({
   variant: v,
   field,
+  result,
   onUpdate,
 }: {
   variant: VariantState;
   field: string;
+  result: ReturnType<typeof calcResult>;
   onUpdate: (id: number, patch: Partial<VariantState>) => void;
 }) => {
-  const isRate = field === 'rate';
-  const currentValue = isRate ? v.rate : (v.termMode === 'years' ? v.years : v.months);
-  const suffix = isRate ? '%' : (v.termMode === 'years' ? 'л.' : 'м.');
-  const [raw, setRaw] = useState('');
   const [focused, setFocused] = useState(false);
+  const [raw, setRaw] = useState('');
+
+  const getCurrentDisplay = () => {
+    switch (field) {
+      case 'rate': return String(v.rate);
+      case 'price': return String(v.price);
+      case 'down': return v.downMode === 'percent' ? String(v.downPercent) : String(v.downAmount);
+      case 'n': return v.termMode === 'years' ? String(v.years) : String(v.months);
+      default: return '';
+    }
+  };
+
+  const getSuffix = () => {
+    switch (field) {
+      case 'rate': return '%';
+      case 'price': return '₽';
+      case 'down': return v.downMode === 'percent' ? '%' : '₽';
+      case 'n': return v.termMode === 'years' ? 'л.' : 'м.';
+      default: return '';
+    }
+  };
+
+  const getFormatted = () => {
+    switch (field) {
+      case 'rate': return `${v.rate}%`;
+      case 'price': return `${fmt(v.price)} ₽`;
+      case 'down': return `${fmt(result.down)} ₽`;
+      case 'n': return `${Math.floor(result.n / 12)} л.${result.n % 12 ? ` ${result.n % 12} м.` : ''}`;
+      default: return '';
+    }
+  };
+
+  const handleBlur = () => {
+    setFocused(false);
+    const val = parseFloat(raw.replace(',', '.'));
+    if (Number.isNaN(val)) return;
+    switch (field) {
+      case 'rate': onUpdate(v.id, { rate: val }); break;
+      case 'price': onUpdate(v.id, { price: val }); break;
+      case 'down':
+        if (v.downMode === 'percent') onUpdate(v.id, { downPercent: Math.min(val, 100) });
+        else onUpdate(v.id, { downAmount: val });
+        break;
+      case 'n':
+        if (v.termMode === 'years') onUpdate(v.id, { years: val, months: Math.round(val * 12) });
+        else onUpdate(v.id, { months: val, years: Math.round((val / 12) * 100) / 100 });
+        break;
+    }
+  };
 
   return (
-    <div className="flex items-center gap-1">
-      <input
-        type="text"
-        inputMode={isRate ? 'decimal' : 'numeric'}
-        value={focused ? raw : String(currentValue)}
-        onFocus={() => { setFocused(true); setRaw(String(currentValue)); }}
-        onBlur={() => {
-          setFocused(false);
-          const cleaned = raw.replace(',', '.');
-          const val = parseFloat(cleaned);
-          if (!Number.isNaN(val)) {
-            if (isRate) onUpdate(v.id, { rate: val });
-            else if (v.termMode === 'years') onUpdate(v.id, { years: val, months: Math.round(val * 12) });
-            else onUpdate(v.id, { months: val, years: Math.round((val / 12) * 100) / 100 });
-          }
-        }}
-        onChange={(e) => setRaw(e.target.value.replace(/[^\d,.]/g, ''))}
-        className="w-16 bg-secondary/60 rounded-lg px-2 py-1 font-mono text-sm font-semibold outline-none border border-transparent focus:border-accent"
-      />
-      <span className="font-mono text-xs text-muted-foreground">{suffix}</span>
-      {!isRate && (
+    <div className="flex items-center gap-1.5">
+      <div className="flex items-center rounded-lg border border-transparent bg-secondary/60 focus-within:border-accent overflow-hidden">
+        {focused ? (
+          <input
+            autoFocus
+            type="text"
+            inputMode="decimal"
+            value={raw}
+            onChange={(e) => setRaw(e.target.value.replace(/[^\d,.]/g, ''))}
+            onBlur={handleBlur}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleBlur(); }}
+            className="w-20 bg-transparent px-2 py-1 font-mono text-sm font-semibold outline-none"
+          />
+        ) : (
+          <button
+            onClick={() => { setFocused(true); setRaw(getCurrentDisplay()); }}
+            className="w-20 px-2 py-1 text-left font-mono text-sm font-semibold text-foreground hover:text-accent transition-colors"
+          >
+            {getFormatted()}
+          </button>
+        )}
+      </div>
+      <span className="font-mono text-xs text-muted-foreground">{getSuffix()}</span>
+      {/* Переключатели для ПВ и срока */}
+      {field === 'down' && (
+        <Toggle
+          options={[{ id: 'percent', label: '%' }, { id: 'amount', label: '₽' }]}
+          value={v.downMode}
+          onChange={(val) => {
+            const mode = val as DownMode;
+            if (mode === 'percent' && v.price > 0) onUpdate(v.id, { downMode: mode, downPercent: Math.round((v.downAmount / v.price) * 10000) / 100 });
+            else if (mode === 'amount' && v.price > 0) onUpdate(v.id, { downMode: mode, downAmount: Math.round((v.price * v.downPercent) / 100) });
+            else onUpdate(v.id, { downMode: mode });
+          }}
+        />
+      )}
+      {field === 'n' && (
         <Toggle
           options={[{ id: 'years', label: 'л' }, { id: 'months', label: 'м' }]}
           value={v.termMode}
@@ -471,6 +616,31 @@ const CompareInlineInput = ({
         />
       )}
     </div>
+  );
+};
+
+const VariantNameInput = ({ value, onChange }: { value: string; onChange: (v: string) => void }) => {
+  const [editing, setEditing] = useState(false);
+  const [raw, setRaw] = useState(value);
+  if (editing) {
+    return (
+      <input
+        autoFocus value={raw}
+        onChange={(e) => setRaw(e.target.value)}
+        onBlur={() => { onChange(raw || value); setEditing(false); }}
+        onKeyDown={(e) => { if (e.key === 'Enter') { onChange(raw || value); setEditing(false); } }}
+        className="w-28 bg-transparent font-mono text-sm font-semibold outline-none border-b border-accent"
+      />
+    );
+  }
+  return (
+    <button
+      onClick={() => { setRaw(value); setEditing(true); }}
+      className="font-mono text-sm font-semibold text-foreground hover:text-accent transition-colors text-left"
+      title="Нажмите, чтобы переименовать"
+    >
+      {value}
+    </button>
   );
 };
 
