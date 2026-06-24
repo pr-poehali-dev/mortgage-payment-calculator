@@ -52,8 +52,7 @@ function makeReportText(name: string, v: VariantState, r: ReturnType<typeof calc
   ].join('\n');
 }
 
-// Общий стиль для select-контролов
-const SELECT_CLS = 'rounded-lg border border-accent/60 bg-accent/10 px-2.5 py-1.5 font-mono text-xs font-semibold text-accent outline-none cursor-pointer hover:bg-accent/20 transition-colors';
+const SELECT_CLS = 'rounded-lg border border-accent/60 bg-accent/10 px-2 py-1 font-mono text-xs font-semibold text-accent outline-none cursor-pointer hover:bg-accent/20 transition-colors';
 
 const Index = () => {
   const [compareMode, setCompareMode] = useState(false);
@@ -70,7 +69,6 @@ const Index = () => {
 
   const [reportVariantId, setReportVariantId] = useState<number | 'all' | null>(null);
   const [scheduleVariantId, setScheduleVariantId] = useState<number | null>(null);
-  // Выбранный вариант для экспорта (null = Вариант 1, -1 = все)
   const [exportVariantId, setExportVariantId] = useState<number | -1 | null>(null);
 
   const startDate = useMemo(() => new Date(), []);
@@ -150,7 +148,6 @@ const Index = () => {
     _variantSeq = 2;
   };
 
-  // Текст отчёта
   const reportText = useMemo(() => {
     if (!compareMode || reportVariantId === null) return makeReportText('Вариант 1', mainVariant, result);
     if (reportVariantId === 'all') return allVariants.map((v, i) => makeReportText(v.name, v, allResults[i])).join('\n\n---\n\n');
@@ -173,71 +170,71 @@ const Index = () => {
     } else { fallback(reportText); }
   };
 
-  // График
-  const scheduleVariant = scheduleVariantId == null
-    ? { sch: schedule, name: 'Вариант 1' }
-    : (() => {
-        const v = variants.find((x) => x.id === scheduleVariantId) ?? mainVariant;
-        const r = calcResult(v);
-        const inp: MortgageInput = { price: v.price, down: r.down, loan: r.loan, rate: v.rate, months: r.n, monthly: r.monthly, total: r.total, overpay: r.overpay, startDate };
-        return { sch: r.loan > 0 && r.n > 0 ? buildSchedule(inp) : [], name: v.name };
-      })();
+  const scheduleData = useMemo(() => {
+    if (scheduleVariantId == null) return { sch: schedule, name: 'Вариант 1' };
+    const v = variants.find((x) => x.id === scheduleVariantId) ?? mainVariant;
+    const r = calcResult(v);
+    const inp: MortgageInput = { price: v.price, down: r.down, loan: r.loan, rate: v.rate, months: r.n, monthly: r.monthly, total: r.total, overpay: r.overpay, startDate };
+    return { sch: r.loan > 0 && r.n > 0 ? buildSchedule(inp) : [], name: v.name };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scheduleVariantId, variants, schedule]);
 
-  // Экспорт с выбором варианта
-  const getExportData = (): { input: MortgageInput; sch: ReturnType<typeof buildSchedule> }[] => {
-    if (!compareMode || exportVariantId === null) return [{ input: mortgageInput, sch: schedule }];
+  // Получить вариант по id для экспорта
+  const getExportName = () => {
+    if (!compareMode || exportVariantId === null) return 'Вариант 1';
+    if (exportVariantId === -1) return 'Все варианты';
+    return allVariants.find((x) => x.id === exportVariantId)?.name ?? 'Вариант 1';
+  };
+
+  const getExportData = (): { input: MortgageInput; sch: ReturnType<typeof buildSchedule>; name: string }[] => {
+    if (!compareMode || exportVariantId === null) return [{ input: mortgageInput, sch: schedule, name: 'Вариант 1' }];
     if (exportVariantId === -1) {
       return allVariants.map((v, i) => {
         const r = allResults[i];
         const inp: MortgageInput = { price: v.price, down: r.down, loan: r.loan, rate: v.rate, months: r.n, monthly: r.monthly, total: r.total, overpay: r.overpay, startDate };
-        const sch = r.loan > 0 && r.n > 0 ? buildSchedule(inp) : [];
-        return { input: inp, sch };
+        return { input: inp, sch: r.loan > 0 && r.n > 0 ? buildSchedule(inp) : [], name: v.name };
       });
     }
     const v = allVariants.find((x) => x.id === exportVariantId) ?? mainVariant;
     const r = calcResult(v);
     const inp: MortgageInput = { price: v.price, down: r.down, loan: r.loan, rate: v.rate, months: r.n, monthly: r.monthly, total: r.total, overpay: r.overpay, startDate };
-    const sch = r.loan > 0 && r.n > 0 ? buildSchedule(inp) : [];
-    return [{ input: inp, sch }];
+    return [{ input: inp, sch: r.loan > 0 && r.n > 0 ? buildSchedule(inp) : [], name: v.name }];
   };
 
-  const guard = (fn: () => void) => () => {
+  const doExport = (type: 'excel' | 'pdf' | 'word') => {
     if (!canExport) return toast.error('Заполните параметры кредита');
-    fn();
+    getExportData().forEach(({ input, sch, name }) => {
+      if (type === 'excel') exportExcel(input, sch, name);
+      else if (type === 'pdf') exportPDF(input, sch, name);
+      else exportWord(input, sch, name);
+    });
   };
 
-  const doExport = (type: 'excel' | 'pdf' | 'word') => guard(() => {
-    const data = getExportData();
-    data.forEach(({ input, sch }) => {
-      if (type === 'excel') exportExcel(input, sch);
-      else if (type === 'pdf') exportPDF(input, sch);
-      else exportWord(input, sch);
-    });
-  })();
+  const showSchedule = canExport || scheduleData.sch.length > 0;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      {/* Шапка-полоса */}
-      <div className="bg-primary text-primary-foreground px-5 py-2.5 flex items-center gap-2">
-        <Icon name="Home" size={14} className="opacity-70" />
+      {/* Шапка */}
+      <div className="bg-primary text-primary-foreground px-4 py-2 flex items-center gap-2">
+        <Icon name="Home" size={13} className="opacity-70 shrink-0" />
         <span className="text-xs font-medium tracking-wide opacity-90">Ипотечный калькулятор — аннуитетный</span>
       </div>
 
-      <div className="mx-auto max-w-5xl px-4 pt-4 pb-10 sm:px-5">
+      <div className="mx-auto max-w-5xl px-3 pt-3 pb-8 sm:px-4">
         {/* Основная форма */}
-        <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-          {/* Левая колонка — параметры */}
-          <div className="rounded-2xl border border-border bg-card p-4 sm:p-5 animate-fade-in">
-            <NumInput label="Стоимость недвижимости" suffix="₽" value={price} onChange={setPrice} />
-            <div className="my-4 h-px bg-border" />
-            <div className="flex items-stretch gap-2">
+        <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+          {/* Левая — поля ввода */}
+          <div className="rounded-2xl border border-border bg-card p-3 sm:p-4">
+            <CompactInput label="Стоимость" suffix="₽" value={price} onChange={setPrice} />
+            <div className="my-2.5 h-px bg-border" />
+            <div className="flex items-center gap-2">
               {downMode === 'percent' ? (
-                <NumInput label="Первоначальный взнос" value={downPercent} onChange={setDownPercent} suffix="%" max={100} />
+                <CompactInput label="Первый взнос" value={downPercent} onChange={setDownPercent} suffix="%" max={100} />
               ) : (
-                <NumInput label="Первоначальный взнос" value={downAmount} onChange={setDownAmount} suffix="₽" />
+                <CompactInput label="Первый взнос" value={downAmount} onChange={setDownAmount} suffix="₽" />
               )}
               <Toggle
-                options={[{ id: 'percent', label: '%' }, { id: 'amount', label: 'руб.' }]}
+                options={[{ id: 'percent', label: '%' }, { id: 'amount', label: '₽' }]}
                 value={downMode} vertical
                 onChange={(v) => {
                   const mode = v as DownMode;
@@ -247,17 +244,17 @@ const Index = () => {
                 }}
               />
             </div>
-            <p className="mt-1.5 font-mono text-xs text-muted-foreground">
-              {downMode === 'percent' ? `= ${fmt((price * downPercent) / 100)} ₽` : `= ${result.downRatio.toFixed(2)} % от стоимости`}
+            <p className="mt-1 font-mono text-[10px] text-muted-foreground">
+              {downMode === 'percent' ? `= ${fmt((price * downPercent) / 100)} ₽` : `= ${result.downRatio.toFixed(2)}% от стоимости`}
             </p>
-            <div className="my-4 h-px bg-border" />
-            <NumInput label="Процентная ставка" suffix="% годовых" value={rate} onChange={setRate} step={0.1} />
-            <div className="my-4 h-px bg-border" />
-            <div className="flex items-stretch gap-2">
+            <div className="my-2.5 h-px bg-border" />
+            <CompactInput label="Ставка" suffix="% год." value={rate} onChange={setRate} step={0.1} />
+            <div className="my-2.5 h-px bg-border" />
+            <div className="flex items-center gap-2">
               {termMode === 'years' ? (
-                <NumInput label="Срок кредита" value={years} onChange={setYears} suffix="лет" max={50} />
+                <CompactInput label="Срок" value={years} onChange={setYears} suffix="лет" max={50} />
               ) : (
-                <NumInput label="Срок кредита" value={months} onChange={setMonths} suffix="мес." max={600} />
+                <CompactInput label="Срок" value={months} onChange={setMonths} suffix="мес." max={600} />
               )}
               <Toggle
                 options={[{ id: 'years', label: 'лет' }, { id: 'months', label: 'мес.' }]}
@@ -270,38 +267,33 @@ const Index = () => {
                 }}
               />
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className="mt-2.5 grid grid-cols-2 gap-2">
               <DateCard icon="FileSignature" label="Оформление" value={fmtDate(startDate)} />
               <DateCard icon="CalendarClock" label="Первый платёж" value={fmtDate(firstPayment)} />
             </div>
           </div>
 
-          {/* Правая колонка — результаты на голубом фоне */}
-          <div className="flex flex-col gap-3">
-            {/* Главный показатель */}
-            <div className="rounded-2xl bg-sky-500 p-5 text-white animate-fade-in">
-              <span className="font-mono text-xs uppercase tracking-[0.2em] opacity-70">Вариант 1 · Платёж в месяц</span>
-              <div className="mt-2 font-mono text-4xl font-bold sm:text-5xl">
-                {fmt(result.monthly)}<span className="ml-2 text-lg opacity-50">₽</span>
+          {/* Правая — результаты */}
+          <div className="flex flex-col gap-2.5">
+            <div className="rounded-2xl bg-sky-500 px-4 py-3 text-white">
+              <span className="font-mono text-[10px] uppercase tracking-widest opacity-70">Вариант 1 · Платёж / мес.</span>
+              <div className="mt-1 font-mono text-3xl font-bold sm:text-4xl">
+                {fmt(result.monthly)}<span className="ml-1.5 text-base opacity-50">₽</span>
               </div>
             </div>
 
-            {/* Статистика */}
-            <div className="grid gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4 animate-fade-in dark:border-sky-900 dark:bg-sky-950/30">
-              <Stat icon="Banknote" label="Сумма кредита" value={`${fmt(result.loan)} ₽`} />
-              <div className="h-px bg-sky-200 dark:bg-sky-800" />
-              <Stat icon="Wallet" label="Первый взнос" value={`${fmt(result.down)} ₽`} />
-              <div className="h-px bg-sky-200 dark:bg-sky-800" />
-              <Stat icon="Percent" label="Начисленные проценты" value={`${fmt(result.overpay)} ₽`} accent />
-              <div className="h-px bg-sky-200 dark:bg-sky-800" />
-              <Stat icon="Receipt" label="Итого выплат" value={`${fmt(result.total)} ₽`} />
+            <div className="rounded-2xl border border-sky-200 bg-sky-50 px-3 py-2.5 dark:border-sky-900 dark:bg-sky-950/30">
+              <MiniStat label="Сумма кредита" value={`${fmt(result.loan)} ₽`} />
+              <MiniStat label="Первый взнос" value={`${fmt(result.down)} ₽`} />
+              <MiniStat label="Начисл. проценты" value={`${fmt(result.overpay)} ₽`} accent />
+              <MiniStat label="Итого выплат" value={`${fmt(result.total)} ₽`} last />
             </div>
 
             {/* Краткий отчёт */}
-            <div className="rounded-2xl border border-border bg-card overflow-hidden animate-fade-in">
-              <div className="flex items-center justify-between border-b border-border px-3 py-2 gap-2 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider font-mono">Отчёт</span>
+            <div className="rounded-2xl border border-border bg-card overflow-hidden">
+              <div className="flex items-center justify-between border-b border-border px-3 py-1.5 gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider font-mono">Отчёт</span>
                   {compareMode && (
                     <select
                       value={reportVariantId === null ? '__main__' : reportVariantId === 'all' ? '__all__' : String(reportVariantId)}
@@ -319,54 +311,57 @@ const Index = () => {
                     </select>
                   )}
                 </div>
-                <button onClick={copyReport} className="flex items-center gap-1 rounded-lg bg-secondary px-2.5 py-1 text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground">
-                  <Icon name="Copy" size={12} />Скопировать
+                <button onClick={copyReport} className="flex items-center gap-1 rounded-md bg-secondary px-2 py-1 text-[10px] font-medium transition-colors hover:bg-accent hover:text-accent-foreground">
+                  <Icon name="Copy" size={11} />Копировать
                 </button>
               </div>
-              <pre className="px-3 py-2.5 font-mono text-xs leading-relaxed text-foreground whitespace-pre-wrap select-all">{reportText}</pre>
+              <pre className="px-3 py-2 font-mono text-[10px] leading-relaxed text-foreground whitespace-pre-wrap select-all">{reportText}</pre>
             </div>
           </div>
         </div>
 
         {/* Кнопки экспорт + сравнение */}
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <ExportBtn label="Excel" onClick={() => doExport('excel')} />
           <ExportBtn label="PDF" onClick={() => doExport('pdf')} />
           <ExportBtn label="Word" onClick={() => doExport('word')} />
 
-          {/* Выбор варианта для экспорта — только в режиме сравнения */}
           {compareMode && (
-            <select
-              value={exportVariantId === null ? '__main__' : exportVariantId === -1 ? '__all__' : String(exportVariantId)}
-              onChange={(e) => {
-                const val = e.target.value;
-                if (val === '__main__') setExportVariantId(null);
-                else if (val === '__all__') setExportVariantId(-1);
-                else setExportVariantId(Number(val));
-              }}
-              className={SELECT_CLS}
-            >
-              <option value="__main__">Вариант 1</option>
-              {variants.map((v) => <option key={v.id} value={String(v.id)}>{v.name}</option>)}
-              <option value="__all__">Все варианты</option>
-            </select>
+            <div className="flex items-center gap-1.5">
+              <span className="font-mono text-[10px] text-muted-foreground whitespace-nowrap">скачать вариант:</span>
+              <select
+                value={exportVariantId === null ? '__main__' : exportVariantId === -1 ? '__all__' : String(exportVariantId)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '__main__') setExportVariantId(null);
+                  else if (val === '__all__') setExportVariantId(-1);
+                  else setExportVariantId(Number(val));
+                }}
+                className={SELECT_CLS}
+                title={`Выбрано: ${getExportName()}`}
+              >
+                <option value="__main__">Вариант 1</option>
+                {variants.map((v) => <option key={v.id} value={String(v.id)}>{v.name}</option>)}
+                <option value="__all__">Все варианты</option>
+              </select>
+            </div>
           )}
 
           <div className="ml-auto flex items-center gap-2">
             {!compareMode ? (
-              <button onClick={enterCompare} className="flex items-center gap-2 rounded-2xl bg-accent px-5 py-3 text-sm font-semibold text-accent-foreground shadow-md transition-all hover:opacity-90 active:scale-95">
-                <Icon name="Columns2" size={16} />
+              <button onClick={enterCompare} className="flex items-center gap-1.5 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground shadow-md transition-all hover:opacity-90 active:scale-95">
+                <Icon name="Columns2" size={15} />
                 Сравнить варианты
               </button>
             ) : (
               <>
                 {variants.length < 9 && (
-                  <button onClick={addVariant} className="flex items-center gap-2 rounded-2xl border border-dashed border-accent/50 bg-card px-4 py-3 text-sm font-medium text-accent transition-all hover:bg-accent/10">
-                    <Icon name="Plus" size={16} />Добавить
+                  <button onClick={addVariant} className="flex items-center gap-1.5 rounded-xl border border-dashed border-accent/50 bg-card px-3 py-2.5 text-sm font-medium text-accent transition-all hover:bg-accent/10">
+                    <Icon name="Plus" size={15} />Добавить
                   </button>
                 )}
-                <button onClick={exitCompare} className="flex items-center gap-2 rounded-2xl border border-border bg-secondary/60 px-4 py-3 text-sm font-medium transition-all hover:border-destructive hover:text-destructive">
-                  <Icon name="X" size={16} />Закрыть
+                <button onClick={exitCompare} className="flex items-center gap-1.5 rounded-xl border border-border bg-secondary/60 px-3 py-2.5 text-sm font-medium transition-all hover:border-destructive hover:text-destructive">
+                  <Icon name="X" size={15} />Закрыть
                 </button>
               </>
             )}
@@ -375,7 +370,7 @@ const Index = () => {
 
         {/* Таблица сравнения */}
         {compareMode && (
-          <div className="mt-4 animate-fade-in">
+          <div className="mt-3">
             <CompareTable
               variants={allVariants}
               results={allResults}
@@ -387,11 +382,11 @@ const Index = () => {
         )}
 
         {/* График платежей */}
-        {(canExport || scheduleVariant.sch.length > 0) && (
-          <div className="mt-4">
+        {showSchedule && (
+          <div className="mt-3">
             {compareMode && (
               <div className="mb-2 flex items-center gap-2">
-                <span className="font-mono text-xs text-muted-foreground uppercase tracking-wider">График:</span>
+                <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">График:</span>
                 <select
                   value={scheduleVariantId === null ? '__main__' : String(scheduleVariantId)}
                   onChange={(e) => {
@@ -405,7 +400,7 @@ const Index = () => {
                 </select>
               </div>
             )}
-            <Schedule rows={scheduleVariant.sch.length > 0 ? scheduleVariant.sch : schedule} />
+            <Schedule rows={scheduleData.sch.length > 0 ? scheduleData.sch : schedule} />
           </div>
         )}
       </div>
@@ -457,35 +452,35 @@ const CompareTable = ({
 
   return (
     <div className="rounded-2xl border border-border bg-card overflow-hidden">
-      <div className="border-b border-border px-5 py-3">
-        <span className="font-mono text-xs uppercase tracking-[0.2em] text-muted-foreground">Сравнение вариантов</span>
+      <div className="border-b border-border px-4 py-2.5">
+        <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Сравнение вариантов</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead>
             <tr className="border-b border-border">
-              <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground w-28 shrink-0" />
+              <th className="px-3 py-2 text-left text-[10px] font-medium text-muted-foreground w-24 shrink-0" />
               {variants.map((v, idx) => {
                 const isBest = results[idx].monthly === bestMonthly && results[idx].monthly > 0;
                 const isMain = v.id === 0;
                 return (
-                  <th key={v.id} className={`px-3 py-3 text-left min-w-[150px] ${isMain ? 'bg-sky-50 dark:bg-sky-950/30' : ''}`}>
+                  <th key={v.id} className={`px-3 py-2 text-left min-w-[140px] ${isMain ? 'bg-sky-50 dark:bg-sky-950/30' : ''}`}>
                     <div className="flex items-center justify-between gap-1">
                       <div className="flex items-center gap-1">
-                        {isBest && <Icon name="Trophy" size={12} className="text-accent shrink-0" />}
+                        {isBest && <Icon name="Trophy" size={11} className="text-accent shrink-0" />}
                         {isMain ? (
-                          <span className="font-mono text-sm font-semibold text-sky-600 dark:text-sky-400">Вариант 1</span>
+                          <span className="font-mono text-xs font-semibold text-sky-600 dark:text-sky-400">Вариант 1</span>
                         ) : (
                           <VariantNameInput value={v.name} onChange={(name) => onUpdate(v.id, { name })} />
                         )}
                       </div>
                       {!isMain && (
                         <button onClick={() => onRemove(v.id)} className="text-muted-foreground hover:text-destructive transition-colors shrink-0">
-                          <Icon name="X" size={12} />
+                          <Icon name="X" size={11} />
                         </button>
                       )}
                     </div>
-                    {isBest && <span className="mt-0.5 block font-mono text-[10px] text-accent/70">лучший платёж</span>}
+                    {isBest && <span className="mt-0.5 block font-mono text-[9px] text-accent/70">лучший платёж</span>}
                   </th>
                 );
               })}
@@ -494,17 +489,17 @@ const CompareTable = ({
           <tbody>
             {ROWS.map((row, rowIdx) => (
               <tr key={row.key} className={rowIdx % 2 === 0 ? 'bg-secondary/20' : ''}>
-                <td className="px-4 py-2.5 text-xs text-muted-foreground font-medium whitespace-nowrap">{row.label}</td>
+                <td className="px-3 py-2 text-[10px] text-muted-foreground font-medium whitespace-nowrap">{row.label}</td>
                 {variants.map((v, idx) => {
                   const isBest = results[idx].monthly === bestMonthly && results[idx].monthly > 0;
                   const isMain = v.id === 0;
                   const canEdit = !isMain && editableKeys.includes(row.key);
                   return (
-                    <td key={v.id} className={`px-3 py-2.5 ${isMain ? 'bg-sky-50/60 dark:bg-sky-950/20' : ''}`}>
+                    <td key={v.id} className={`px-3 py-2 ${isMain ? 'bg-sky-50/60 dark:bg-sky-950/20' : ''}`}>
                       {canEdit ? (
                         <CompareCell variant={v} field={row.key} result={results[idx]} onUpdate={onUpdate} />
                       ) : (
-                        <span className={`font-mono text-sm font-semibold ${row.key === 'monthly' && isBest ? 'text-accent' : ''}`}>
+                        <span className={`font-mono text-xs font-semibold ${row.key === 'monthly' && isBest ? 'text-accent' : ''}`}>
                           {fmtCell(row.key, results[idx], v)}
                         </span>
                       )}
@@ -520,7 +515,9 @@ const CompareTable = ({
   );
 };
 
-/* Редактируемая ячейка */
+/* Редактируемая ячейка — баги исправлены:
+   1. Enter при пустом raw не восстанавливает старое значение (разрешаем 0)
+   2. Toggle получает актуальный v из замыкания — работает сразу */
 const CompareCell = ({
   variant: v,
   field,
@@ -532,10 +529,10 @@ const CompareCell = ({
   result: ReturnType<typeof calcResult>;
   onUpdate: (id: number, patch: Partial<VariantState>) => void;
 }) => {
-  const [focused, setFocused] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [raw, setRaw] = useState('');
 
-  const getCurrentDisplay = () => {
+  const getCurrentRaw = () => {
     switch (field) {
       case 'rate': return String(v.rate);
       case 'price': return String(v.price);
@@ -555,9 +552,11 @@ const CompareCell = ({
     }
   };
 
-  const handleBlur = () => {
-    setFocused(false);
-    const val = parseFloat(raw.replace(',', '.'));
+  const commit = (rawStr: string) => {
+    setEditing(false);
+    // Разрешаем пустую строку = 0
+    const cleaned = rawStr.trim().replace(',', '.');
+    const val = cleaned === '' ? 0 : parseFloat(cleaned);
     if (Number.isNaN(val)) return;
     switch (field) {
       case 'rate': onUpdate(v.id, { rate: val }); break;
@@ -574,18 +573,21 @@ const CompareCell = ({
   };
 
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1 flex-wrap">
       <div className="flex items-center rounded-lg border border-transparent bg-secondary/60 focus-within:border-accent overflow-hidden">
-        {focused ? (
-          <input autoFocus type="text" inputMode="decimal" value={raw}
+        {editing ? (
+          <input
+            autoFocus type="text" inputMode="decimal" value={raw}
             onChange={(e) => setRaw(e.target.value.replace(/[^\d,.]/g, ''))}
-            onBlur={handleBlur}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleBlur(); }}
-            className="w-20 bg-transparent px-2 py-1 font-mono text-sm font-semibold outline-none"
+            onBlur={() => commit(raw)}
+            onKeyDown={(e) => { if (e.key === 'Enter') commit(raw); if (e.key === 'Escape') setEditing(false); }}
+            className="w-16 bg-transparent px-2 py-0.5 font-mono text-xs font-semibold outline-none"
           />
         ) : (
-          <button onClick={() => { setFocused(true); setRaw(getCurrentDisplay()); }}
-            className="w-20 px-2 py-1 text-left font-mono text-sm font-semibold text-foreground hover:text-accent transition-colors">
+          <button
+            onClick={() => { setEditing(true); setRaw(getCurrentRaw()); }}
+            className="w-16 px-2 py-0.5 text-left font-mono text-xs font-semibold text-foreground hover:text-accent transition-colors"
+          >
             {getFormatted()}
           </button>
         )}
@@ -626,13 +628,13 @@ const VariantNameInput = ({ value, onChange }: { value: string; onChange: (v: st
         onChange={(e) => setRaw(e.target.value)}
         onBlur={() => { onChange(raw || value); setEditing(false); }}
         onKeyDown={(e) => { if (e.key === 'Enter') { onChange(raw || value); setEditing(false); } }}
-        className="w-24 bg-transparent font-mono text-sm font-semibold outline-none border-b border-accent"
+        className="w-20 bg-transparent font-mono text-xs font-semibold outline-none border-b border-accent"
       />
     );
   }
   return (
     <button onClick={() => { setRaw(value); setEditing(true); }}
-      className="font-mono text-sm font-semibold text-foreground hover:text-accent transition-colors text-left"
+      className="font-mono text-xs font-semibold text-foreground hover:text-accent transition-colors text-left"
       title="Нажмите, чтобы переименовать">
       {value}
     </button>
@@ -641,51 +643,47 @@ const VariantNameInput = ({ value, onChange }: { value: string; onChange: (v: st
 
 /* ── Вспомогательные компоненты ────────────────────────────── */
 
-const fmtInput = (n: number) => {
-  if (Number.isNaN(n) || n === 0) return '';
-  const hasDecimals = n % 1 !== 0;
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: hasDecimals ? 2 : 0, minimumFractionDigits: 0 }).format(n);
-};
-
-const NumInput = ({ value, onChange, label, suffix, step = 1, max }: {
+// Компактное поле ввода — label слева, значение + единицы в строку
+const CompactInput = ({ value, onChange, label, suffix, step = 1, max }: {
   value: number; onChange: (n: number) => void;
   label?: string; suffix?: string; step?: number; max?: number;
 }) => {
   const isDecimal = step < 1;
   const [focused, setFocused] = useState(false);
   const [raw, setRaw] = useState('');
-  const floated = focused || value !== 0;
-  const displayValue = focused ? raw : fmtInput(value);
+
+  const fmtVal = (n: number) => {
+    if (Number.isNaN(n) || n === 0) return '';
+    const hasDecimals = n % 1 !== 0;
+    return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: hasDecimals ? 2 : 0 }).format(n);
+  };
+
   return (
-    <div className="relative w-full rounded-xl border border-input bg-secondary/40 transition-colors focus-within:border-accent">
-      {label && (
-        <label className={`pointer-events-none absolute left-4 transition-all duration-200 font-mono ${floated ? 'top-2 text-[10px] text-muted-foreground/70' : 'top-1/2 -translate-y-1/2 text-sm text-muted-foreground/50'}`}>
-          {label}
-        </label>
-      )}
-      <div className="flex items-center px-4">
-        <input
-          type="text" inputMode={isDecimal ? 'decimal' : 'numeric'} value={displayValue}
-          onFocus={() => { setFocused(true); setRaw(value === 0 ? '' : String(value)); }}
-          onBlur={() => {
-            setFocused(false);
-            const cleaned = raw.replace(/\s/g, '').replace(',', '.');
-            let v = parseFloat(cleaned);
-            if (max !== undefined && v > max) v = max;
-            onChange(Number.isNaN(v) ? 0 : v);
-          }}
-          onChange={(e) => {
-            const val = e.target.value.replace(/[^\d,.\s]/g, '');
-            setRaw(val);
-            const cleaned = val.replace(/\s/g, '').replace(',', '.');
-            let v = parseFloat(cleaned);
-            if (max !== undefined && v > max) v = max;
-            if (!Number.isNaN(v)) onChange(v);
-          }}
-          className={`w-full bg-transparent font-mono text-base font-medium outline-none ${label ? 'pb-2 pt-5' : 'py-3'}`}
-        />
-        {suffix && <span className="ml-2 font-mono text-xs text-muted-foreground shrink-0">{suffix}</span>}
-      </div>
+    <div className="flex items-center gap-2 rounded-xl border border-input bg-secondary/40 px-3 py-2 transition-colors focus-within:border-accent">
+      {label && <span className="shrink-0 font-mono text-xs text-muted-foreground w-20">{label}</span>}
+      <input
+        type="text"
+        inputMode={isDecimal ? 'decimal' : 'numeric'}
+        value={focused ? raw : fmtVal(value)}
+        onFocus={() => { setFocused(true); setRaw(value === 0 ? '' : String(value)); }}
+        onBlur={() => {
+          setFocused(false);
+          const cleaned = raw.replace(/\s/g, '').replace(',', '.');
+          let v = parseFloat(cleaned);
+          if (max !== undefined && v > max) v = max;
+          onChange(Number.isNaN(v) ? 0 : v);
+        }}
+        onChange={(e) => {
+          const val = e.target.value.replace(/[^\d,.\s]/g, '');
+          setRaw(val);
+          const cleaned = val.replace(/\s/g, '').replace(',', '.');
+          let v = parseFloat(cleaned);
+          if (max !== undefined && v > max) v = max;
+          if (!Number.isNaN(v)) onChange(v);
+        }}
+        className="w-full bg-transparent font-mono text-sm font-semibold outline-none"
+      />
+      {suffix && <span className="shrink-0 font-mono text-xs text-muted-foreground">{suffix}</span>}
     </div>
   );
 };
@@ -697,41 +695,36 @@ const Toggle = ({ options, value, onChange, vertical = false }: {
   <div className={`flex shrink-0 rounded-xl border border-border bg-secondary/60 p-0.5 ${vertical ? 'flex-col' : 'flex-row'}`}>
     {options.map((o) => (
       <button key={o.id} onClick={() => onChange(o.id)}
-        className={`rounded-lg px-2.5 font-mono text-xs font-semibold transition-all ${vertical ? 'py-1.5' : 'py-1'} ${value === o.id ? 'bg-accent text-accent-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+        className={`rounded-lg px-2 font-mono text-xs font-semibold transition-all ${vertical ? 'py-1.5' : 'py-1'} ${value === o.id ? 'bg-accent text-accent-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
         {o.label}
       </button>
     ))}
   </div>
 );
 
-const Stat = ({ icon, label, value, accent }: { icon: string; label: string; value: string; accent?: boolean }) => (
-  <div className="flex items-center justify-between">
-    <div className="flex items-center gap-2.5">
-      <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${accent ? 'bg-accent/10 text-accent' : 'bg-sky-100 text-sky-600 dark:bg-sky-900/40 dark:text-sky-400'}`}>
-        <Icon name={icon} size={16} />
-      </div>
-      <span className="text-sm text-muted-foreground">{label}</span>
-    </div>
-    <span className={`font-mono text-sm font-semibold ${accent ? 'text-accent' : ''}`}>{value}</span>
+// Компактная строка статистики без иконок
+const MiniStat = ({ label, value, accent, last }: { label: string; value: string; accent?: boolean; last?: boolean }) => (
+  <div className={`flex items-center justify-between py-1 ${!last ? 'border-b border-sky-100 dark:border-sky-900' : ''}`}>
+    <span className="text-xs text-muted-foreground">{label}</span>
+    <span className={`font-mono text-xs font-semibold ${accent ? 'text-accent' : ''}`}>{value}</span>
   </div>
 );
 
 const DateCard = ({ icon, label, value }: { icon: string; label: string; value: string }) => (
-  <div className="rounded-xl border border-border bg-secondary/30 p-2.5">
-    <div className="mb-1 flex items-center gap-1.5 text-muted-foreground">
-      <Icon name={icon} size={13} /><span className="text-xs">{label}</span>
+  <div className="rounded-xl border border-border bg-secondary/30 px-2.5 py-2">
+    <div className="mb-0.5 flex items-center gap-1 text-muted-foreground">
+      <Icon name={icon} size={11} /><span className="text-[10px]">{label}</span>
     </div>
-    <span className="font-mono text-sm font-medium">{value}</span>
+    <span className="font-mono text-xs font-medium">{value}</span>
   </div>
 );
 
-// Кнопка экспорта с иконкой Download
 const ExportBtn = ({ label, onClick }: { label: string; onClick: () => void }) => (
   <button
     onClick={onClick}
-    className="flex items-center gap-1.5 rounded-xl border-2 border-primary/40 bg-primary/10 px-3 py-2.5 text-sm font-semibold text-primary transition-all hover:border-primary hover:bg-primary/20 active:scale-95"
+    className="flex items-center gap-1.5 rounded-xl border-2 border-primary/40 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary transition-all hover:border-primary hover:bg-primary/20 active:scale-95"
   >
-    <Icon name="Download" size={15} />
+    <Icon name="Download" size={13} />
     {label}
   </button>
 );
