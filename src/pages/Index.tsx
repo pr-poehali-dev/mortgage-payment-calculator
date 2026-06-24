@@ -129,14 +129,11 @@ const Index = () => {
         <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
           {/* Form */}
           <div className="rounded-3xl border border-border bg-card p-6 sm:p-8 animate-fade-in">
-            <Field label="Стоимость недвижимости" suffix="₽">
-              <NumInput value={price} onChange={setPrice} />
-            </Field>
+            <NumInput label="Стоимость недвижимости" suffix="₽" value={price} onChange={setPrice} />
 
             <div className="my-7 h-px bg-border" />
 
-            <div className="mb-3 flex items-center justify-between">
-              <span className="text-sm font-medium">Первоначальный взнос</span>
+            <div className="mb-3 flex items-center justify-end">
               <Toggle
                 options={[
                   { id: 'percent', label: '%' },
@@ -156,9 +153,9 @@ const Index = () => {
               />
             </div>
             {downMode === 'percent' ? (
-              <NumInput value={downPercent} onChange={setDownPercent} suffix="%" max={100} />
+              <NumInput label="Первоначальный взнос" value={downPercent} onChange={setDownPercent} suffix="%" max={100} />
             ) : (
-              <NumInput value={downAmount} onChange={setDownAmount} suffix="₽" />
+              <NumInput label="Первоначальный взнос" value={downAmount} onChange={setDownAmount} suffix="₽" />
             )}
             <p className="mt-2 font-mono text-xs text-muted-foreground">
               {downMode === 'percent'
@@ -168,14 +165,11 @@ const Index = () => {
 
             <div className="my-7 h-px bg-border" />
 
-            <Field label="Процентная ставка" suffix="% годовых">
-              <NumInput value={rate} onChange={setRate} step={0.1} />
-            </Field>
+            <NumInput label="Процентная ставка" suffix="% годовых" value={rate} onChange={setRate} step={0.1} />
 
             <div className="my-7 h-px bg-border" />
 
-            <div className="mb-3 flex items-center justify-between">
-              <span className="text-sm font-medium">Срок кредита</span>
+            <div className="mb-3 flex items-center justify-end">
               <Toggle
                 options={[
                   { id: 'years', label: 'Лет' },
@@ -194,9 +188,9 @@ const Index = () => {
               />
             </div>
             {termMode === 'years' ? (
-              <NumInput value={years} onChange={setYears} suffix="лет" max={50} />
+              <NumInput label="Срок кредита" value={years} onChange={setYears} suffix="лет" max={50} />
             ) : (
-              <NumInput value={months} onChange={setMonths} suffix="мес." max={600} />
+              <NumInput label="Срок кредита" value={months} onChange={setMonths} suffix="мес." max={600} />
             )}
 
             <div className="mt-7 grid grid-cols-2 gap-3">
@@ -311,12 +305,14 @@ const fmtInput = (n: number) => {
 const NumInput = ({
   value,
   onChange,
+  label,
   suffix,
   step = 1,
   max,
 }: {
   value: number;
   onChange: (n: number) => void;
+  label?: string;
   suffix?: string;
   step?: number;
   max?: number;
@@ -325,36 +321,51 @@ const NumInput = ({
   const [focused, setFocused] = useState(false);
   const [raw, setRaw] = useState('');
 
+  const hasValue = value !== 0;
+  const floated = focused || hasValue;
   const displayValue = focused ? raw : fmtInput(value);
 
   return (
-    <div className="flex items-center rounded-xl border border-input bg-secondary/40 px-4 transition-colors focus-within:border-accent">
-      <input
-        type="text"
-        inputMode={isDecimal ? 'decimal' : 'numeric'}
-        value={displayValue}
-        onFocus={() => {
-          setFocused(true);
-          setRaw(value === 0 ? '' : String(value));
-        }}
-        onBlur={() => {
-          setFocused(false);
-          const cleaned = raw.replace(/\s/g, '').replace(',', '.');
-          let v = parseFloat(cleaned);
-          if (max !== undefined && v > max) v = max;
-          onChange(Number.isNaN(v) ? 0 : v);
-        }}
-        onChange={(e) => {
-          const val = e.target.value.replace(/[^\d,.\s]/g, '');
-          setRaw(val);
-          const cleaned = val.replace(/\s/g, '').replace(',', '.');
-          let v = parseFloat(cleaned);
-          if (max !== undefined && v > max) v = max;
-          if (!Number.isNaN(v)) onChange(v);
-        }}
-        className="w-full bg-transparent py-3.5 font-mono text-lg font-medium outline-none"
-      />
-      {suffix && <span className="ml-2 font-mono text-sm text-muted-foreground">{suffix}</span>}
+    <div className="relative rounded-xl border border-input bg-secondary/40 transition-colors focus-within:border-accent">
+      {label && (
+        <label
+          className={`pointer-events-none absolute left-4 transition-all duration-200 font-mono ${
+            floated
+              ? 'top-2 text-[10px] text-muted-foreground/70'
+              : 'top-1/2 -translate-y-1/2 text-base text-muted-foreground/50'
+          }`}
+        >
+          {label}
+        </label>
+      )}
+      <div className="flex items-center px-4">
+        <input
+          type="text"
+          inputMode={isDecimal ? 'decimal' : 'numeric'}
+          value={displayValue}
+          onFocus={() => {
+            setFocused(true);
+            setRaw(value === 0 ? '' : String(value));
+          }}
+          onBlur={() => {
+            setFocused(false);
+            const cleaned = raw.replace(/\s/g, '').replace(',', '.');
+            let v = parseFloat(cleaned);
+            if (max !== undefined && v > max) v = max;
+            onChange(Number.isNaN(v) ? 0 : v);
+          }}
+          onChange={(e) => {
+            const val = e.target.value.replace(/[^\d,.\s]/g, '');
+            setRaw(val);
+            const cleaned = val.replace(/\s/g, '').replace(',', '.');
+            let v = parseFloat(cleaned);
+            if (max !== undefined && v > max) v = max;
+            if (!Number.isNaN(v)) onChange(v);
+          }}
+          className={`w-full bg-transparent font-mono text-lg font-medium outline-none ${label ? 'pb-2.5 pt-6' : 'py-3.5'}`}
+        />
+        {suffix && <span className="ml-2 font-mono text-sm text-muted-foreground shrink-0">{suffix}</span>}
+      </div>
     </div>
   );
 };
