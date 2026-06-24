@@ -73,18 +73,57 @@ export function exportExcel(input: MortgageInput, schedule: ScheduleRow[], varia
   XLSX.writeFile(wb, makeFileName(variantName, 'xlsx'));
 }
 
-export function exportPDF(input: MortgageInput, schedule: ScheduleRow[], variantName = 'Вариант 1') {
+// Кэш base64 шрифта с кириллицей (загружается один раз)
+let _fontBase64: string | null = null;
+
+async function loadCyrillicFont(): Promise<string | null> {
+  if (_fontBase64) return _fontBase64;
+  try {
+    // Roboto Regular — поддерживает кириллицу, загружаем через Google Fonts CSS API
+    // Получаем реальный URL ttf-файла
+    const cssResp = await fetch('https://fonts.googleapis.com/css2?family=Roboto&subset=cyrillic', {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+    });
+    const css = await cssResp.text();
+    const match = css.match(/src:\s*url\(([^)]+\.ttf)\)/);
+    const ttfUrl = match?.[1];
+    if (!ttfUrl) return null;
+    const fontResp = await fetch(ttfUrl);
+    const buffer = await fontResp.arrayBuffer();
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+    _fontBase64 = base64;
+    return base64;
+  } catch {
+    return null;
+  }
+}
+
+export async function exportPDF(input: MortgageInput, schedule: ScheduleRow[], variantName = 'Вариант 1') {
   const doc = new jsPDF({ orientation: 'landscape' });
+
+  // Пытаемся загрузить кириллический шрифт
+  const fontB64 = await loadCyrillicFont();
+  let fontName = 'helvetica';
+  if (fontB64) {
+    doc.addFileToVFS('Roboto-Regular.ttf', fontB64);
+    doc.addFont('Roboto-Regular.ttf', 'Roboto', 'normal');
+    fontName = 'Roboto';
+  }
+
+  doc.setFont(fontName);
   doc.setFontSize(13);
   doc.text(`Ипотека — ${variantName}`, 14, 15);
+
+  const tableStyles = { font: fontName, fontSize: 9 };
+  const tableStyles7 = { font: fontName, fontSize: 7 };
 
   autoTable(doc, {
     startY: 20,
     head: [['Параметр', 'Значение']],
     body: summaryRows(input),
     theme: 'grid',
-    headStyles: { fillColor: [36, 36, 36] },
-    styles: { fontSize: 9 },
+    headStyles: { fillColor: [36, 36, 36], font: fontName },
+    styles: tableStyles,
     columnStyles: { 0: { cellWidth: 70 }, 1: { cellWidth: 80 } },
   });
 
@@ -95,8 +134,8 @@ export function exportPDF(input: MortgageInput, schedule: ScheduleRow[], variant
     head: [HEADERS_RU],
     body: schedule.map(toRow),
     theme: 'striped',
-    headStyles: { fillColor: [14, 165, 233] },
-    styles: { fontSize: 7 },
+    headStyles: { fillColor: [14, 165, 233], font: fontName },
+    styles: tableStyles7,
   });
 
   doc.save(makeFileName(variantName, 'pdf'));

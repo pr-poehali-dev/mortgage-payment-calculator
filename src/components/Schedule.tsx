@@ -6,9 +6,13 @@ const Schedule = ({ rows }: { rows: ScheduleRow[] }) => {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? rows : rows.slice(0, 12);
 
+  const totalPayment = rows.reduce((s, r) => s + r.payment, 0);
+  const totalInterest = rows.reduce((s, r) => s + r.interest, 0);
+  const totalPrincipal = rows.reduce((s, r) => s + r.principal, 0);
+
   return (
     <div className="overflow-hidden rounded-3xl border border-border bg-card animate-fade-in">
-      <div className="flex items-center justify-between border-b border-border px-6 py-5">
+      <div className="flex items-center justify-between border-b border-border px-6 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-secondary text-muted-foreground">
             <Icon name="CalendarDays" size={18} />
@@ -26,9 +30,9 @@ const Schedule = ({ rows }: { rows: ScheduleRow[] }) => {
             <tr className="border-b border-border text-left font-mono text-xs uppercase tracking-wider text-muted-foreground">
               <th className="px-6 py-3 font-medium">№</th>
               <th className="px-3 py-3 font-medium">Дата</th>
-              <th className="px-3 py-3 text-right font-medium">Платёж</th>
+              <th className="px-3 py-3 text-right font-medium">Основной долг</th>
               <th className="px-3 py-3 text-right font-medium">Проценты</th>
-              <th className="px-3 py-3 text-right font-medium">Долг</th>
+              <th className="px-3 py-3 text-right font-medium">Платёж</th>
               <th className="px-6 py-3 text-right font-medium">Остаток</th>
             </tr>
           </thead>
@@ -40,13 +44,23 @@ const Schedule = ({ rows }: { rows: ScheduleRow[] }) => {
               >
                 <td className="px-6 py-2.5 text-muted-foreground">{r.index}</td>
                 <td className="px-3 py-2.5">{fmtDate(r.date)}</td>
-                <td className="px-3 py-2.5 text-right font-medium">{fmt(r.payment)}</td>
-                <td className="px-3 py-2.5 text-right text-accent">{fmt(r.interest)}</td>
                 <td className="px-3 py-2.5 text-right">{fmt(r.principal)}</td>
+                <td className="px-3 py-2.5 text-right text-accent">{fmt(r.interest)}</td>
+                <td className="px-3 py-2.5 text-right font-medium">{fmt(r.payment)}</td>
                 <td className="px-6 py-2.5 text-right text-muted-foreground">{fmt(r.balance)}</td>
               </tr>
             ))}
           </tbody>
+          {/* Итоговая строка — всегда видна */}
+          <tfoot>
+            <tr className="border-t-2 border-border bg-secondary/30 font-mono font-semibold text-sm">
+              <td className="px-6 py-2.5 text-muted-foreground" colSpan={2}>Итого</td>
+              <td className="px-3 py-2.5 text-right">{fmt(totalPrincipal)}</td>
+              <td className="px-3 py-2.5 text-right text-accent">{fmt(totalInterest)}</td>
+              <td className="px-3 py-2.5 text-right">{fmt(totalPayment)}</td>
+              <td className="px-6 py-2.5 text-right text-muted-foreground">—</td>
+            </tr>
+          </tfoot>
         </table>
       </div>
 
