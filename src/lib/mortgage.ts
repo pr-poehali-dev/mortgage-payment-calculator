@@ -114,61 +114,64 @@ export function buildSchedule(input: MortgageInput): ScheduleRow[] {
   let balance = loan;
   const rows: ScheduleRow[] = [];
 
-  // База дат начисления: если задана firstPaymentDate — используем её число месяца,
-  // иначе startDate + 1 мес.
+  // База дат начисления
   const base = firstPaymentDate ?? addMonths(startDate, 1);
 
-  // Вспомогательная функция: аннуитетный платёж по месячной ставке
-  const annuityPayment = (bal: number, n: number): number => {
+  // Аннуитетный платёж по классической формуле (ставка/12, для расчёта «эталонного» платежа)
+  // Используется ТОЛЬКО для разбивки осн.долг/проценты внутри каждого платежа:
+  // - проценты считаются по фактическим дням (ACT/ACT)
+  // - основной долг = общий платёж - проценты
+  // - общий платёж пересчитывается каждый раз от актуального остатка и оставшихся месяцев,
+  //   чтобы долг был погашен ровно в срок
+  const monthlyRate = rate / 100 / 12;
+  const annuity = (bal: number, n: number): number => {
     if (n <= 0 || bal <= 0) return 0;
-    const r = rate / 100 / 12;
-    if (r === 0) return bal / n;
-    return (bal * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+    if (monthlyRate === 0) return bal / n;
+    return (bal * monthlyRate * Math.pow(1 + monthlyRate, n)) / (Math.pow(1 + monthlyRate, n) - 1);
   };
 
-  // Фиксированный аннуитет на обычный период (после льготного)
-  const effectiveMonths = months - interestOnlyMonths;
-  const fixedAnnuity = annuityPayment(loan, effectiveMonths);
-
-  // Начальная точка отсчёта дней для первого платежа = дата оформления
-  let prevAccrualDate: Date = new Date(
+  // Начало первого периода = дата оформления
+  let prevUTC = new Date(
     Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate())
   );
 
   for (let m = 1; m <= months; m++) {
-    // Дата начисления = фиксированное число (из base), сдвинутое на m-1 месяцев
+    // Дата начисления m-го платежа
     const accrualDate = addMonths(base, m - 1);
-    // Нормализуем в UTC-полночь для точного подсчёта дней
     const accrualUTC = new Date(
       Date.UTC(accrualDate.getFullYear(), accrualDate.getMonth(), accrualDate.getDate())
     );
 
-    const days = daysBetween(prevAccrualDate, accrualUTC);
+    const days = daysBetween(prevUTC, accrualUTC);
 
-    // Проценты по фактическим дням, с учётом года (365/366)
-    const interest = calcInterest(balance, rate, prevAccrualDate, accrualUTC);
+    // Проценты по фактическим дням (ACT/ACT, с разбивкой по годам)
+    const interest = calcInterest(balance, rate, prevUTC, accrualUTC);
 
     const isInterestOnly = m <= interestOnlyMonths;
     let principal: number;
     let payment: number;
 
     if (isInterestOnly) {
-      // Льготный период — только проценты
+      // Льготный период — платим только проценты, тело не трогаем
       principal = 0;
       payment = interest;
     } else {
-      // Аннуитетный платёж: основной долг = аннуитет - проценты
-      // Аннуитет зафиксирован в начале обычного периода
-      const annuity = fixedAnnuity;
-      principal = annuity - interest;
-      // Последний платёж — гасим всё что осталось
-      if (m === months || principal > balance) principal = balance;
+      // Обычный период: пересчитываем аннуитетный платёж от ТЕКУЩЕГО остатка
+      // и ОСТАВШЕГОСЯ количества платежей — это гарантирует погашение в срок
+      const remainingPayments = months - interestOnlyMonths - (m - 1 - interestOnlyMonths);
+      const totalPayment = annuity(balance, remainingPayments);
+      principal = totalPayment - interest;
+
+      // Защиты от краевых случаев:
+      if (principal < 0) principal = 0;                    // проценты > платёжа (не должно быть, но страховка)
+      if (principal > balance) principal = balance;        // последний платёж
+      if (m === months) principal = balance;               // последний — гасим всё
+
       payment = principal + interest;
     }
 
     balance = Math.max(balance - principal, 0);
 
-    // Дата списания = ближайший рабочий день от даты начисления
     const payDate = nextWorkDay(new Date(accrualDate));
 
     rows.push({
@@ -183,8 +186,7 @@ export function buildSchedule(input: MortgageInput): ScheduleRow[] {
       days,
     });
 
-    // Следующий период начинается с текущей даты начисления
-    prevAccrualDate = accrualUTC;
+    prevUTC = accrualUTC;
   }
 
   return rows;
