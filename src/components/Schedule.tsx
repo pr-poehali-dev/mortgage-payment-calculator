@@ -30,7 +30,6 @@ const Schedule = ({ rows }: { rows: ScheduleRow[] }) => {
             <tr className="border-b border-border text-left font-mono text-xs uppercase tracking-wider text-muted-foreground">
               <th className="px-4 py-3 font-medium">№ платежа</th>
               <th className="px-3 py-3 font-medium">Дата платежа</th>
-              <th className="px-3 py-3 font-medium text-[9px]">Дней</th>
               <th className="px-3 py-3 text-right font-medium">Сумма осн. долга</th>
               <th className="px-3 py-3 text-right font-medium">Сумма нач. %</th>
               <th className="px-3 py-3 text-right font-medium">Общая сумма платежа</th>
@@ -50,7 +49,6 @@ const Schedule = ({ rows }: { rows: ScheduleRow[] }) => {
                   )}
                 </td>
                 <td className="px-3 py-2">{fmtDate(r.date)}</td>
-                <td className="px-3 py-2 text-muted-foreground/60 text-xs">{r.days}</td>
                 <td className="px-3 py-2 text-right">{r.principal > 0 ? fmt(r.principal) : '—'}</td>
                 <td className="px-3 py-2 text-right text-accent">{fmt(r.interest)}</td>
                 <td className="px-3 py-2 text-right font-semibold">{fmt(r.payment)}</td>
@@ -60,7 +58,7 @@ const Schedule = ({ rows }: { rows: ScheduleRow[] }) => {
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-border bg-secondary/30 font-mono font-semibold text-sm">
-              <td className="px-4 py-2.5 text-muted-foreground" colSpan={3}>Итого</td>
+              <td className="px-4 py-2.5 text-muted-foreground" colSpan={2}>Итого</td>
               <td className="px-3 py-2.5 text-right">{fmt(totalPrincipal)}</td>
               <td className="px-3 py-2.5 text-right text-accent">{fmt(totalInterest)}</td>
               <td className="px-3 py-2.5 text-right">{fmt(totalPayment)}</td>
