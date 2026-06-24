@@ -108,13 +108,13 @@ const Index = () => {
   const mortgageInput: MortgageInput = {
     price, down: result.down, loan: result.loan, rate,
     months: result.n, monthly: result.monthly, total: result.total,
-    overpay: result.overpay, startDate,
+    overpay: result.overpay, startDate, firstPaymentDate,
   };
 
   const schedule = useMemo(
     () => (result.loan > 0 && result.n > 0 ? buildSchedule(mortgageInput) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [result.loan, result.n, result.monthly, rate, startDate],
+    [result.loan, result.n, result.monthly, rate, startDate, firstPaymentDate],
   );
 
   const canExport = schedule.length > 0;
@@ -191,7 +191,7 @@ const Index = () => {
     if (scheduleVariantId == null) return { sch: schedule, name: 'Вариант 1' };
     const v = variants.find((x) => x.id === scheduleVariantId) ?? mainVariant;
     const r = calcResult(v);
-    const inp: MortgageInput = { price: v.price, down: r.down, loan: r.loan, rate: v.rate, months: r.n, monthly: r.monthly, total: r.total, overpay: r.overpay, startDate };
+    const inp: MortgageInput = { price: v.price, down: r.down, loan: r.loan, rate: v.rate, months: r.n, monthly: r.monthly, total: r.total, overpay: r.overpay, startDate, firstPaymentDate };
     return { sch: r.loan > 0 && r.n > 0 ? buildSchedule(inp) : [], name: v.name };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scheduleVariantId, variants, schedule]);
@@ -201,13 +201,13 @@ const Index = () => {
     if (exportVariantId === -1) {
       return allVariants.map((v, i) => {
         const r = allResults[i];
-        const inp: MortgageInput = { price: v.price, down: r.down, loan: r.loan, rate: v.rate, months: r.n, monthly: r.monthly, total: r.total, overpay: r.overpay, startDate };
+        const inp: MortgageInput = { price: v.price, down: r.down, loan: r.loan, rate: v.rate, months: r.n, monthly: r.monthly, total: r.total, overpay: r.overpay, startDate, firstPaymentDate };
         return { input: inp, sch: r.loan > 0 && r.n > 0 ? buildSchedule(inp) : [], name: v.name };
       });
     }
     const v = allVariants.find((x) => x.id === exportVariantId) ?? mainVariant;
     const r = calcResult(v);
-    const inp: MortgageInput = { price: v.price, down: r.down, loan: r.loan, rate: v.rate, months: r.n, monthly: r.monthly, total: r.total, overpay: r.overpay, startDate };
+    const inp: MortgageInput = { price: v.price, down: r.down, loan: r.loan, rate: v.rate, months: r.n, monthly: r.monthly, total: r.total, overpay: r.overpay, startDate, firstPaymentDate };
     return [{ input: inp, sch: r.loan > 0 && r.n > 0 ? buildSchedule(inp) : [], name: v.name }];
   };
 
@@ -764,7 +764,7 @@ const fmtNum = (n: number) => {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: hasDecimals ? 2 : 0 }).format(n);
 };
 
-// Поле ввода с кнопками +/-
+// Поле ввода с кнопками −/+ по бокам и необязательными дополнительными кнопками снизу
 const StepInput = ({
   value, onChange, label, suffix, max, decimal = false,
   stepA, labelA, stepB, labelB,
@@ -786,60 +786,65 @@ const StepInput = ({
   const doStep = (delta: number) => onChange(clamp(parseFloat((value + delta).toFixed(4))));
 
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-2 rounded-xl border border-input bg-secondary/40 px-3 py-2 transition-colors focus-within:border-accent">
-        {label && <span className="shrink-0 font-mono text-xs text-muted-foreground w-20">{label}</span>}
-        <input
-          type="text"
-          inputMode={decimal ? 'decimal' : 'numeric'}
-          value={focused ? raw : fmtNum(value)}
-          onFocus={() => { setFocused(true); setRaw(value === 0 ? '' : String(value)); }}
-          onBlur={() => {
-            setFocused(false);
-            const cleaned = raw.replace(/\s/g, '').replace(',', '.');
-            const v = parseFloat(cleaned);
-            onChange(clamp(Number.isNaN(v) ? 0 : v));
-          }}
-          onChange={(e) => {
-            const val = e.target.value.replace(/[^\d,.\s]/g, '');
-            setRaw(val);
-            const cleaned = val.replace(/\s/g, '').replace(',', '.');
-            const v = parseFloat(cleaned);
-            if (!Number.isNaN(v)) onChange(clamp(v));
-          }}
-          className="w-full bg-transparent font-mono text-sm font-semibold outline-none"
-        />
-        {suffix && <span className="shrink-0 font-mono text-xs text-muted-foreground">{suffix}</span>}
+    <div className="flex flex-col gap-1 w-full">
+      {/* Поле с кнопками по бокам — основной шаг stepA */}
+      <div className="flex items-center gap-1">
+        {stepA !== undefined && (
+          <button
+            onClick={() => doStep(-stepA)}
+            title={labelA ? `−${labelA}` : undefined}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:bg-accent/20 hover:text-accent transition-colors font-bold text-sm"
+          >−</button>
+        )}
+        <div className="flex flex-1 items-center gap-2 rounded-xl border border-input bg-secondary/40 px-3 py-2 transition-colors focus-within:border-accent">
+          {label && <span className="shrink-0 font-mono text-xs text-muted-foreground w-20">{label}</span>}
+          <input
+            type="text"
+            inputMode={decimal ? 'decimal' : 'numeric'}
+            value={focused ? raw : fmtNum(value)}
+            onFocus={() => { setFocused(true); setRaw(value === 0 ? '' : String(value)); }}
+            onBlur={() => {
+              setFocused(false);
+              const cleaned = raw.replace(/\s/g, '').replace(',', '.');
+              const v = parseFloat(cleaned);
+              onChange(clamp(Number.isNaN(v) ? 0 : v));
+            }}
+            onChange={(e) => {
+              const val = e.target.value.replace(/[^\d,.\s]/g, '');
+              setRaw(val);
+              const cleaned = val.replace(/\s/g, '').replace(',', '.');
+              const v = parseFloat(cleaned);
+              if (!Number.isNaN(v)) onChange(clamp(v));
+            }}
+            className="w-full bg-transparent font-mono text-sm font-semibold outline-none"
+          />
+          {suffix && <span className="shrink-0 font-mono text-xs text-muted-foreground">{suffix}</span>}
+        </div>
+        {stepA !== undefined && (
+          <button
+            onClick={() => doStep(stepA)}
+            title={labelA ? `+${labelA}` : undefined}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-secondary text-muted-foreground hover:bg-accent/20 hover:text-accent transition-colors font-bold text-sm"
+          >+</button>
+        )}
       </div>
-      {/* Кнопки шагов */}
-      {(stepA !== undefined || stepB !== undefined) && (
-        <div className="flex gap-1">
-          {stepA !== undefined && (
-            <>
-              <StepBtn label={`−${labelA ?? stepA}`} onClick={() => doStep(-stepA)} />
-              <StepBtn label={`+${labelA ?? stepA}`} onClick={() => doStep(stepA)} />
-            </>
-          )}
-          {stepB !== undefined && (
-            <>
-              <StepBtn label={`−${labelB ?? stepB}`} onClick={() => doStep(-stepB)} />
-              <StepBtn label={`+${labelB ?? stepB}`} onClick={() => doStep(stepB)} />
-            </>
-          )}
+      {/* Дополнительный шаг stepB — маленькие кнопки */}
+      {stepB !== undefined && (
+        <div className="flex gap-1 pl-9 pr-9">
+          <button
+            onClick={() => doStep(-stepB)}
+            className="flex-1 rounded-md border border-border bg-secondary/50 py-0.5 font-mono text-[9px] font-medium text-muted-foreground transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-accent active:scale-95"
+          >−{labelB ?? stepB}</button>
+          <button
+            onClick={() => doStep(stepB)}
+            className="flex-1 rounded-md border border-border bg-secondary/50 py-0.5 font-mono text-[9px] font-medium text-muted-foreground transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-accent active:scale-95"
+          >+{labelB ?? stepB}</button>
         </div>
       )}
+
     </div>
   );
 };
-
-const StepBtn = ({ label, onClick }: { label: string; onClick: () => void }) => (
-  <button
-    onClick={onClick}
-    className="flex-1 rounded-lg border border-border bg-secondary/50 px-1 py-0.5 font-mono text-[9px] font-medium text-muted-foreground transition-colors hover:border-accent/50 hover:bg-accent/10 hover:text-accent active:scale-95"
-  >
-    {label}
-  </button>
-);
 
 // Редактируемая дата
 const DateEdit = ({

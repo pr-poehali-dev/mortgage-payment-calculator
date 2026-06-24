@@ -8,6 +8,7 @@ export interface MortgageInput {
   total: number;
   overpay: number;
   startDate: Date;
+  firstPaymentDate?: Date; // если задана, даты платежей отсчитываются от неё
 }
 
 export interface ScheduleRow {
@@ -82,10 +83,15 @@ export function nextWorkDay(d: Date): Date {
 }
 
 export function buildSchedule(input: MortgageInput): ScheduleRow[] {
-  const { loan, rate, months, monthly, startDate } = input;
+  const { loan, rate, months, monthly, startDate, firstPaymentDate } = input;
   const i = rate / 100 / 12;
   let balance = loan;
   const rows: ScheduleRow[] = [];
+
+  // Базовая дата для отсчёта платежей: если задана firstPaymentDate,
+  // то используем её как первый платёж, последующие — через addMonths от неё.
+  // Иначе отсчитываем от startDate + m месяцев.
+  const base = firstPaymentDate ?? null;
 
   for (let m = 1; m <= months; m++) {
     const interest = balance * i;
@@ -93,7 +99,13 @@ export function buildSchedule(input: MortgageInput): ScheduleRow[] {
     if (m === months || principal > balance) principal = balance;
     balance = Math.max(balance - principal, 0);
 
-    const rawDate = addMonths(startDate, m);
+    let rawDate: Date;
+    if (base) {
+      // Первый платёж = firstPaymentDate, второй = firstPaymentDate + 1 мес, и т.д.
+      rawDate = addMonths(base, m - 1);
+    } else {
+      rawDate = addMonths(startDate, m);
+    }
     const payDate = nextWorkDay(rawDate);
 
     rows.push({
