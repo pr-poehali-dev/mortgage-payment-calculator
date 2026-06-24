@@ -133,13 +133,19 @@ const Index = () => {
 
             <div className="my-7 h-px bg-border" />
 
-            <div className="mb-3 flex items-center justify-end">
+            <div className="flex items-stretch gap-2">
+              {downMode === 'percent' ? (
+                <NumInput label="Первоначальный взнос" value={downPercent} onChange={setDownPercent} suffix="%" max={100} />
+              ) : (
+                <NumInput label="Первоначальный взнос" value={downAmount} onChange={setDownAmount} suffix="₽" />
+              )}
               <Toggle
                 options={[
                   { id: 'percent', label: '%' },
-                  { id: 'amount', label: '₽' },
+                  { id: 'amount', label: 'руб.' },
                 ]}
                 value={downMode}
+                vertical
                 onChange={(v) => {
                   const mode = v as DownMode;
                   if (mode === 'percent' && price > 0) {
@@ -152,11 +158,6 @@ const Index = () => {
                 }}
               />
             </div>
-            {downMode === 'percent' ? (
-              <NumInput label="Первоначальный взнос" value={downPercent} onChange={setDownPercent} suffix="%" max={100} />
-            ) : (
-              <NumInput label="Первоначальный взнос" value={downAmount} onChange={setDownAmount} suffix="₽" />
-            )}
             <p className="mt-2 font-mono text-xs text-muted-foreground">
               {downMode === 'percent'
                 ? `= ${fmt((price * downPercent) / 100)} ₽`
@@ -169,13 +170,19 @@ const Index = () => {
 
             <div className="my-7 h-px bg-border" />
 
-            <div className="mb-3 flex items-center justify-end">
+            <div className="flex items-stretch gap-2">
+              {termMode === 'years' ? (
+                <NumInput label="Срок кредита" value={years} onChange={setYears} suffix="лет" max={50} />
+              ) : (
+                <NumInput label="Срок кредита" value={months} onChange={setMonths} suffix="мес." max={600} />
+              )}
               <Toggle
                 options={[
-                  { id: 'years', label: 'Лет' },
-                  { id: 'months', label: 'Мес.' },
+                  { id: 'years', label: 'лет' },
+                  { id: 'months', label: 'мес.' },
                 ]}
                 value={termMode}
+                vertical
                 onChange={(v) => {
                   const mode = v as TermMode;
                   if (mode === 'months') {
@@ -187,11 +194,6 @@ const Index = () => {
                 }}
               />
             </div>
-            {termMode === 'years' ? (
-              <NumInput label="Срок кредита" value={years} onChange={setYears} suffix="лет" max={50} />
-            ) : (
-              <NumInput label="Срок кредита" value={months} onChange={setMonths} suffix="мес." max={600} />
-            )}
 
             <div className="mt-7 grid grid-cols-2 gap-3">
               <DateCard icon="FileSignature" label="Дата оформления" value={fmtDate(startDate)} />
@@ -374,19 +376,21 @@ const Toggle = ({
   options,
   value,
   onChange,
+  vertical = false,
 }: {
   options: { id: string; label: string }[];
   value: string;
   onChange: (v: string) => void;
+  vertical?: boolean;
 }) => (
-  <div className="flex rounded-lg bg-secondary p-0.5">
+  <div className={`flex shrink-0 rounded-xl border border-border bg-secondary/60 p-0.5 ${vertical ? 'flex-col' : 'flex-row'}`}>
     {options.map((o) => (
       <button
         key={o.id}
         onClick={() => onChange(o.id)}
-        className={`rounded-md px-3 py-1 font-mono text-xs font-medium transition-all ${
+        className={`rounded-lg px-3 font-mono text-xs font-semibold transition-all ${vertical ? 'py-2' : 'py-1.5'} ${
           value === o.id
-            ? 'bg-card text-foreground shadow-sm'
+            ? 'bg-accent text-accent-foreground shadow-sm'
             : 'text-muted-foreground hover:text-foreground'
         }`}
       >
