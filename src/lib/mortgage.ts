@@ -33,22 +33,33 @@ export const fmt2 = (n: number) =>
 export const fmtDate = (d: Date) =>
   new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(d);
 
-// Прибавить n месяцев к дате (локальное время)
+// Прибавить n месяцев (работает в локальном времени)
 export const addMonths = (d: Date, n: number): Date => {
   const r = new Date(d);
   r.setMonth(r.getMonth() + n);
   return r;
 };
 
-// ── Утилиты ───────────────────────────────────────────────────
+// ── Работаем ТОЛЬКО с тройками (год, месяц, день) ─────────────
+// Это исключает любое влияние часовых поясов
 
-// Дата → UTC-полночь (убирает влияние часового пояса)
-function toUTC(d: Date): Date {
-  return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+type YMD = { y: number; m: number; d: number };
+
+function toYMD(date: Date): YMD {
+  return { y: date.getFullYear(), m: date.getMonth(), d: date.getDate() };
 }
 
-function daysBetween(a: Date, b: Date): number {
-  return Math.round((b.getTime() - a.getTime()) / 86_400_000);
+function ymdToMs(ymd: YMD): number {
+  return Date.UTC(ymd.y, ymd.m, ymd.d);
+}
+
+function addMonthsYMD(ymd: YMD, n: number): YMD {
+  const d = new Date(Date.UTC(ymd.y, ymd.m + n, ymd.d));
+  return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate() };
+}
+
+function daysBetweenYMD(a: YMD, b: YMD): number {
+  return Math.round((ymdToMs(b) - ymdToMs(a)) / 86_400_000);
 }
 
 function isLeapYear(year: number): boolean {
@@ -59,13 +70,29 @@ function daysInYear(year: number): number {
   return isLeapYear(year) ? 366 : 365;
 }
 
+// Проценты ACT/ACT от YMD a до YMD b
+function calcInterestYMD(balance: number, annualRatePct: number, a: YMD, b: YMD): number {
+  const rate = annualRatePct / 100;
+  let interest = 0;
+  let cur = { ...a };
+
+  while (ymdToMs(cur) < ymdToMs(b)) {
+    const nextJan1: YMD = { y: cur.y + 1, m: 0, d: 1 };
+    const segEnd = ymdToMs(b) <= ymdToMs(nextJan1) ? b : nextJan1;
+    const days = daysBetweenYMD(cur, segEnd);
+    interest += balance * rate * days / daysInYear(cur.y);
+    cur = { ...segEnd };
+  }
+
+  return interest;
+}
+
 // ── Праздники РФ ──────────────────────────────────────────────
 const FIXED_HOLIDAYS = new Set([
   '01-01', '02-01', '03-01', '04-01', '05-01', '06-01', '07-01', '08-01',
   '23-02', '08-03', '01-05', '09-05', '12-06', '04-11',
 ]);
 
-// Явные переносы: 'ГГГГ-ДД-ММ' → true=выходной, false=рабочий
 const TRANSFERS: Record<string, boolean> = {
   '2024-29-12': true,
   '2025-31-01': true,
@@ -90,28 +117,7 @@ export function nextWorkDay(d: Date): Date {
   return r;
 }
 
-// ── Проценты ACT/ACT ─────────────────────────────────────────
-// Если период пересекает 1 января — делим на части по годам
-// Обе даты должны быть UTC-полночь
-function calcInterest(balance: number, annualRatePct: number, from: Date, to: Date): number {
-  const rate = annualRatePct / 100;
-  let interest = 0;
-  let cur = new Date(from);
-
-  while (cur < to) {
-    const curYear = cur.getFullYear();
-    const nextJan1 = new Date(Date.UTC(curYear + 1, 0, 1));
-    const segEnd = to < nextJan1 ? to : nextJan1;
-    const days = daysBetween(cur, segEnd);
-    interest += balance * rate * days / daysInYear(curYear);
-    cur = segEnd;
-  }
-
-  return interest;
-}
-
 // ── Аннуитет ─────────────────────────────────────────────────
-// A = P × i × (1+i)^n / ((1+i)^n − 1),  i = rate/12
 export function calcMonthlyPayment(loan: number, annualRatePct: number, n: number): number {
   if (loan <= 0 || n <= 0) return 0;
   const i = annualRatePct / 100 / 12;
@@ -126,51 +132,41 @@ export function buildSchedule(input: MortgageInput): ScheduleRow[] {
   const rows: ScheduleRow[] = [];
   let balance = loan;
 
-  // База для дат начисления — число месяца из firstPaymentDate (или startDate+1мес)
-  const base = firstPaymentDate ?? addMonths(startDate, 1);
+  // Все даты — только (год, месяц, число), без времени и часовых поясов
+  const startYMD = toYMD(startDate);
+  const baseYMD = firstPaymentDate ? toYMD(firstPaymentDate) : addMonthsYMD(startYMD, 1);
 
-  // Аннуитет фиксируется ОДИН РАЗ от суммы кредита и эффективного срока
+  // Аннуитет — один раз на весь срок
   const effectiveMonths = months - interestOnlyMonths;
   const fixedAnnuity = calcMonthlyPayment(loan, rate, effectiveMonths);
 
-  // Начало первого периода = дата оформления (UTC)
-  let periodStart = toUTC(startDate);
+  // Начало первого периода = дата оформления
+  let periodYMD: YMD = { ...startYMD };
 
   for (let m = 1; m <= months; m++) {
-    // Дата начисления m-го платежа (UTC)
-    const accrualDate = toUTC(addMonths(base, m - 1));
+    // Дата начисления = baseYMD сдвинутая на (m-1) месяцев
+    const accrualYMD = addMonthsYMD(baseYMD, m - 1);
 
-    const days = daysBetween(periodStart, accrualDate);
-
-    // Проценты за период по ACT/ACT
-    const interest = calcInterest(balance, rate, periodStart, accrualDate);
+    const days = daysBetweenYMD(periodYMD, accrualYMD);
+    const interest = calcInterestYMD(balance, rate, periodYMD, accrualYMD);
 
     const isInterestOnly = m <= interestOnlyMonths;
     let principal: number;
     let payment: number;
 
     if (isInterestOnly) {
-      // Льготный период — только проценты
       principal = 0;
       payment = interest;
-
     } else if (m === months) {
-      // Последний платёж — гасим весь остаток (нестандартная сумма)
-      // Все предыдущие платежи одинаковы (fixedAnnuity), накопленное
-      // отклонение из-за дней "выравнивается" здесь
+      // Последний платёж — весь остаток + проценты (нестандартная сумма)
       principal = balance;
       payment = principal + interest;
-
     } else {
-      // Стандартный платёж = фиксированный аннуитет
-      // principal = аннуитет − проценты за период
+      // Фиксированный аннуитет, тело = аннуитет − проценты
       principal = fixedAnnuity - interest;
-
       if (principal < 0) {
-        // Проценты превысили аннуитет (длинный нестандартный период).
-        // Платим только проценты, тело не трогаем — баланс не меняется.
-        // Это может случиться только для самого первого периода если он
-        // значительно длиннее месяца.
+        // Крайний случай: очень длинный первый период при высокой ставке
+        // Платим только проценты, тело в следующем
         principal = 0;
         payment = interest;
       } else {
@@ -181,13 +177,14 @@ export function buildSchedule(input: MortgageInput): ScheduleRow[] {
 
     balance = Math.max(balance - principal, 0);
 
-    // Дата списания = ближайший рабочий день от даты начисления
-    const payDate = nextWorkDay(new Date(accrualDate));
+    // Дата для отображения: строим из YMD чтобы не было сдвига часового пояса
+    const accrualDateLocal = new Date(accrualYMD.y, accrualYMD.m, accrualYMD.d);
+    const payDate = nextWorkDay(new Date(accrualYMD.y, accrualYMD.m, accrualYMD.d));
 
     rows.push({
       index: m,
       date: payDate,
-      accrualDate: new Date(accrualDate),
+      accrualDate: accrualDateLocal,
       payment,
       interest,
       principal,
@@ -196,7 +193,7 @@ export function buildSchedule(input: MortgageInput): ScheduleRow[] {
       days,
     });
 
-    periodStart = accrualDate;
+    periodYMD = { ...accrualYMD };
   }
 
   return rows;
