@@ -150,29 +150,17 @@ export function buildSchedule(input: MortgageInput): ScheduleRow[] {
       principal = 0;
       payment = interest;
     } else if (m === months) {
-      // Последний платёж: гасим весь остаток + проценты
+      // Последний платёж нестандартный: гасим ровно то что осталось + проценты за период.
+      // За счёт этого все предыдущие платежи строго одинаковы (фиксированный аннуитет).
       principal = balance;
-      payment = balance + interest;
+      payment = principal + interest;
     } else {
-      // Стандартный аннуитетный платёж.
-      // Проценты посчитаны по дням (ACT/ACT), тело = аннуитет − проценты.
-      // Первый платёж может отличаться если период нестандартной длины —
-      // это норма, так делают все банки (Сбер, ВТБ и др.).
+      // Все платежи кроме последнего — фиксированный аннуитет.
+      // Проценты по дням (ACT/ACT), основной долг = аннуитет − проценты.
       payment = fixedAnnuity;
       principal = payment - interest;
-
-      // Если вдруг проценты за нестандартный период превысили аннуитет
-      // (крайне редкий случай: очень длинный первый период + очень высокая ставка),
-      // первый платёж = только проценты + 1 коп. тела, остальные — по обычному аннуитету
-      if (principal <= 0) {
-        principal = 0;
-        payment = interest;
-      }
-
-      if (principal > balance) {
-        principal = balance;
-        payment = principal + interest;
-      }
+      if (principal < 0) principal = 0;
+      if (principal > balance) principal = balance;
     }
 
     balance = Math.max(balance - principal, 0);
