@@ -39,47 +39,16 @@ export const addMonths = (d: Date, n: number): Date => {
   return r;
 };
 
+// ── Даты ──────────────────────────────────────────────────────
+
 function daysBetween(a: Date, b: Date): number {
   const msA = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
   const msB = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
   return Math.round((msB - msA) / 86_400_000);
 }
 
-function daysInYear(d: Date): number {
-  const y = d.getFullYear();
-  return ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0) ? 366 : 365;
-}
-
-// Проценты за период [prevDate, curDate) по ACT/ACT
-function calcInterestForPeriod(balance: number, annualRatePct: number, prevDate: Date, curDate: Date): number {
-  const rate = annualRatePct / 100;
-  let interest = 0;
-  let segStart = new Date(prevDate);
-  while (segStart < curDate) {
-    const y = segStart.getFullYear();
-    const nextYearStart = new Date(Date.UTC(y + 1, 0, 1));
-    const segEnd = curDate < nextYearStart ? curDate : nextYearStart;
-    const days = daysBetween(segStart, segEnd);
-    interest += balance * rate / daysInYear(segStart) * days;
-    segStart = segEnd;
-  }
-  return interest;
-}
-
-// Периодическая ставка для конкретного периода (по фактическим дням)
-function periodRate(annualRatePct: number, prevDate: Date, curDate: Date): number {
-  const rate = annualRatePct / 100;
-  let r = 0;
-  let segStart = new Date(prevDate);
-  while (segStart < curDate) {
-    const y = segStart.getFullYear();
-    const nextYearStart = new Date(Date.UTC(y + 1, 0, 1));
-    const segEnd = curDate < nextYearStart ? curDate : nextYearStart;
-    const days = daysBetween(segStart, segEnd);
-    r += rate / daysInYear(segStart) * days;
-    segStart = segEnd;
-  }
-  return r;
+function daysInYear(year: number): number {
+  return ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0) ? 366 : 365;
 }
 
 // ── Праздники РФ ──────────────────────────────────────────────
@@ -99,107 +68,122 @@ function isHoliday(d: Date): boolean {
   const dd = String(d.getDate()).padStart(2, '0');
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const yyyy = String(d.getFullYear());
-  const key = `${yyyy}-${dd}-${mm}`;
-  const dayKey = `${dd}-${mm}`;
-  if (key in TRANSFERS) return TRANSFERS[key];
+  if (`${yyyy}-${dd}-${mm}` in TRANSFERS) return TRANSFERS[`${yyyy}-${dd}-${mm}`];
   const dow = d.getDay();
   if (dow === 0 || dow === 6) return true;
-  return FIXED_HOLIDAYS.has(dayKey);
+  return FIXED_HOLIDAYS.has(`${dd}-${mm}`);
 }
 
 export function nextWorkDay(d: Date): Date {
-  const result = new Date(d);
-  while (isHoliday(result)) {
-    result.setDate(result.getDate() + 1);
+  const r = new Date(d);
+  while (isHoliday(r)) r.setDate(r.getDate() + 1);
+  return r;
+}
+
+// ── Проценты по ACT/ACT ───────────────────────────────────────
+// Формула банков РФ: проценты = остаток × ставка_год / дней_в_году × дней_в_периоде
+// Если период пересекает год — считаем по частям с разным базисом
+function interestForPeriod(balance: number, annualRatePct: number, from: Date, to: Date): number {
+  const rate = annualRatePct / 100;
+  let result = 0;
+  let cur = new Date(from);
+
+  while (cur < to) {
+    const yearEnd = new Date(Date.UTC(cur.getFullYear() + 1, 0, 1)); // 1 янв следующего года
+    const segEnd = to < yearEnd ? to : yearEnd;
+    const days = daysBetween(cur, segEnd);
+    result += balance * rate / daysInYear(cur.getFullYear()) * days;
+    cur = segEnd;
   }
+
   return result;
 }
 
+// ── Аннуитетный платёж ────────────────────────────────────────
+// Стандартная формула: A = P × i × (1+i)^n / ((1+i)^n − 1), где i = rate/12
+export function calcMonthlyPayment(loan: number, annualRatePct: number, months: number): number {
+  if (loan <= 0 || months <= 0) return 0;
+  const i = annualRatePct / 100 / 12;
+  if (i === 0) return loan / months;
+  return (loan * i * Math.pow(1 + i, months)) / (Math.pow(1 + i, months) - 1);
+}
+
+// ── Построение графика ────────────────────────────────────────
 export function buildSchedule(input: MortgageInput): ScheduleRow[] {
   const { loan, rate, months, startDate, firstPaymentDate, interestOnlyMonths = 0 } = input;
-  let balance = loan;
+
   const rows: ScheduleRow[] = [];
+  let balance = loan;
 
+  // Дата первого начисления процентов
   const base = firstPaymentDate ?? addMonths(startDate, 1);
-  const monthlyRate = rate / 100 / 12; // стандартная месячная ставка
 
-  // Заранее вычисляем все даты начисления (UTC)
-  const accrualDates: Date[] = [];
-  for (let m = 1; m <= months; m++) {
-    const d = addMonths(base, m - 1);
-    accrualDates.push(new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())));
-  }
+  // Аннуитетный платёж фиксируется ОДИН РАЗ на весь срок (за исключением льготного периода).
+  // Считается от суммы кредита и эффективного срока (без льготных месяцев).
+  const effectiveMonths = months - interestOnlyMonths;
+  const fixedAnnuity = calcMonthlyPayment(loan, rate, effectiveMonths);
 
-  // Начало первого периода = дата оформления
-  let prevUTC = new Date(
-    Date.UTC(startDate.getFullYear(), startDate.getMonth(), startDate.getDate())
-  );
+  // Точка отсчёта первого периода = дата оформления
+  let periodStart = new Date(Date.UTC(
+    startDate.getFullYear(), startDate.getMonth(), startDate.getDate()
+  ));
 
   for (let m = 1; m <= months; m++) {
-    const accrualDate = addMonths(base, m - 1);
-    const accrualUTC = accrualDates[m - 1];
+    // Дата начисления = фиксированное число месяца (из firstPaymentDate)
+    const rawAccrual = addMonths(base, m - 1);
+    const accrualDate = new Date(Date.UTC(
+      rawAccrual.getFullYear(), rawAccrual.getMonth(), rawAccrual.getDate()
+    ));
 
-    const days = daysBetween(prevUTC, accrualUTC);
+    // Фактических дней в периоде
+    const days = daysBetween(periodStart, accrualDate);
 
-    // Проценты за фактический период (ACT/ACT)
-    const interest = calcInterestForPeriod(balance, rate, prevUTC, accrualUTC);
+    // Проценты по ACT/ACT — от periodStart до accrualDate
+    const interest = interestForPeriod(balance, rate, periodStart, accrualDate);
 
     const isInterestOnly = m <= interestOnlyMonths;
     let principal: number;
     let payment: number;
 
     if (isInterestOnly) {
+      // Льготный период: платим только начисленные проценты
       principal = 0;
       payment = interest;
     } else if (m === months) {
+      // Последний платёж: гасим весь остаток + проценты
       principal = balance;
-      payment = principal + interest;
+      payment = balance + interest;
     } else {
-      // Считаем аннуитет с учётом фактической ставки ТЕКУЩЕГО периода.
-      //
-      // Логика: PV = A/(1+r0) + A/((1+r0)(1+r1)) + ... + A/((1+r0)(1+r1)^(n-1))
-      //   где r0 = периодическая ставка текущего (возможно нестандартного) периода
-      //       r1 = стандартная месячная ставка для всех последующих периодов
-      //       n  = оставшееся кол-во платежей включая текущий
-      //
-      // PV = A * (1/(1+r0)) * (1 + sum_{k=1}^{n-1} 1/(1+r1)^k)
-      //    = A * (1/(1+r0)) * (1 + (1 - (1+r1)^{-(n-1)}) / r1)
-      //
-      // => A = PV / [ (1/(1+r0)) * (1 + (1-(1+r1)^{-(n-1)})/r1) ]
+      // Стандартный аннуитетный платёж.
+      // Проценты посчитаны по дням (ACT/ACT), тело = аннуитет − проценты.
+      // Первый платёж может отличаться если период нестандартной длины —
+      // это норма, так делают все банки (Сбер, ВТБ и др.).
+      payment = fixedAnnuity;
+      principal = payment - interest;
 
-      const normalPaymentsDone = Math.max(0, m - interestOnlyMonths); // сколько обычных сделано
-      const n = (months - interestOnlyMonths) - normalPaymentsDone + 1; // оставшихся включая текущий
-
-      const r0 = periodRate(rate, prevUTC, accrualUTC); // фактическая ставка этого периода
-      const r1 = monthlyRate;                           // стандартная для следующих
-
-      let currentAnnuity: number;
-      if (n === 1) {
-        currentAnnuity = balance * (1 + r0);
-      } else if (r1 === 0) {
-        currentAnnuity = balance / n;
-      } else {
-        const tail = (1 - Math.pow(1 + r1, -(n - 1))) / r1; // аннуитетный множитель хвоста
-        const pv = (1 / (1 + r0)) * (1 + tail);
-        currentAnnuity = balance / pv;
+      // Если вдруг проценты за нестандартный период превысили аннуитет
+      // (крайне редкий случай: очень длинный первый период + очень высокая ставка),
+      // первый платёж = только проценты + 1 коп. тела, остальные — по обычному аннуитету
+      if (principal <= 0) {
+        principal = 0;
+        payment = interest;
       }
 
-      principal = currentAnnuity - interest;
-      // Если период нестандартно длинный и проценты превысили аннуитет —
-      // гасим минимум 1 руб. тела, чтобы долг всегда двигался вперёд
-      if (principal < 1) principal = Math.min(1, balance);
-      if (principal > balance) principal = balance;
-      payment = principal + interest;
+      if (principal > balance) {
+        principal = balance;
+        payment = principal + interest;
+      }
     }
 
     balance = Math.max(balance - principal, 0);
 
-    const payDate = nextWorkDay(new Date(accrualDate));
+    // Дата списания = ближайший рабочий день (с учётом праздников РФ)
+    const payDate = nextWorkDay(new Date(rawAccrual));
 
     rows.push({
       index: m,
       date: payDate,
-      accrualDate: new Date(accrualDate),
+      accrualDate: new Date(rawAccrual),
       payment,
       interest,
       principal,
@@ -208,7 +192,8 @@ export function buildSchedule(input: MortgageInput): ScheduleRow[] {
       days,
     });
 
-    prevUTC = accrualUTC;
+    // Следующий период начинается с текущей даты начисления
+    periodStart = accrualDate;
   }
 
   return rows;

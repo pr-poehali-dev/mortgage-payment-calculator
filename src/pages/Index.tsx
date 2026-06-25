@@ -2,7 +2,7 @@ import { useState, useMemo, useRef } from 'react';
 import Icon from '@/components/ui/icon';
 import { toast } from 'sonner';
 import Schedule from '@/components/Schedule';
-import { buildSchedule, fmt, fmtDate, addMonths, nextWorkDay, MortgageInput } from '@/lib/mortgage';
+import { buildSchedule, calcMonthlyPayment, fmt, fmtDate, addMonths, nextWorkDay, MortgageInput } from '@/lib/mortgage';
 import { exportExcel, exportPDF, exportWord } from '@/lib/export';
 
 type DownMode = 'percent' | 'amount';
@@ -30,11 +30,7 @@ function calcResult(v: VariantState) {
   const down = v.downMode === 'percent' ? (v.price * v.downPercent) / 100 : v.downAmount;
   const loan = Math.max(v.price - down, 0);
   const n = v.termMode === 'years' ? v.years * 12 : v.months;
-  const i = v.rate / 100 / 12;
-  let monthly = 0;
-  if (loan > 0 && n > 0) {
-    monthly = i === 0 ? loan / n : (loan * i * Math.pow(1 + i, n)) / (Math.pow(1 + i, n) - 1);
-  }
+  const monthly = calcMonthlyPayment(loan, v.rate, n);
   const total = monthly * n;
   const overpay = total - loan;
   return { down, loan, monthly, total, overpay, n, downRatio: v.price ? (down / v.price) * 100 : 0 };
@@ -119,11 +115,7 @@ const Index = () => {
     const down = downMode === 'percent' ? (price * downPercent) / 100 : downAmount;
     const loan = Math.max(price - down, 0);
     const n = termMode === 'years' ? years * 12 : months;
-    const i = rate / 100 / 12;
-    let monthly = 0;
-    if (loan > 0 && n > 0) {
-      monthly = i === 0 ? loan / n : (loan * i * Math.pow(1 + i, n)) / (Math.pow(1 + i, n) - 1);
-    }
+    const monthly = calcMonthlyPayment(loan, rate, n);
     const total = monthly * n;
     const overpay = total - loan;
     return { down, loan, monthly, total, overpay, n, downRatio: price ? (down / price) * 100 : 0 };
