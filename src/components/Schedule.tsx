@@ -49,7 +49,7 @@ const Schedule = ({ rows }: { rows: ScheduleRow[] }) => {
                   )}
                 </td>
                 <td className="px-3 py-2">{fmtDate(r.date)}</td>
-                <td className="px-3 py-2 text-right">{r.principal > 0 ? fmt(r.principal) : '—'}</td>
+                <td className="px-3 py-2 text-right">{fmt(r.principal)}</td>
                 <td className="px-3 py-2 text-right text-accent">{fmt(r.interest)}</td>
                 <td className="px-3 py-2 text-right font-semibold">{fmt(r.payment)}</td>
                 <td className="px-4 py-2 text-right text-muted-foreground">{fmt(r.balance)}</td>
